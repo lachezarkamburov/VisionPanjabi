@@ -5,6 +5,11 @@ A Dockerized poker strategy engine that ingests Twitch frames from GGPoker, uses
 ## Features
 
 - **Multi-table vision agent** powered by OpenCV + Streamlink for frame capture (up to 6 tables).
+A Dockerized poker strategy engine that ingests Twitch frames from GGPoker, uses OpenCV template matching for hero card recognition, and maps the resulting hand into an 8x8 strategy matrix.
+
+## Features
+
+- **Vision agent** powered by OpenCV + Streamlink for frame capture.
 - **Template matching** for card recognition (drop GGPoker card templates into `templates/`).
 - **Strategy engine** driven by an 8x8 matrix stored in `charts/strategy_matrix.json`.
 - **Persistent storage** for strategy charts and local SQLite hand history data in `data/`.
@@ -24,6 +29,7 @@ A Dockerized poker strategy engine that ingests Twitch frames from GGPoker, uses
 1. Add your GGPoker card templates (`.png`) to `templates/`.
 2. Update `config.yaml` with your stream URL and ROI coordinates.
 3. (Optional) Define manual table layouts if auto-detection is not reliable.
+2. (Optional) Update ROI coordinates in `src/main.py` to match your stream layout.
 
 ### Docker
 
@@ -53,6 +59,8 @@ docker-compose up --build
   }
 }
 ```
+
+- The strategy engine checks the 8x8 matrix. If the matched hand is in a **Red** zone, it outputs **"4-Bet Bluff"**.
 
 ## Strategy Matrix Format
 
