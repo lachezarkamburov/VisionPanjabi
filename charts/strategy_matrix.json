@@ -1,0 +1,13 @@
+{
+  "ranks": ["A", "K", "Q", "J", "T", "9", "8", "7"],
+  "matrix": [
+    ["Red", "Red", "Red", "Red", "Red", "Green", "Green", "Green"],
+    ["Red", "Red", "Red", "Green", "Green", "Green", "Green", "Green"],
+    ["Red", "Red", "Green", "Green", "Green", "Green", "Green", "Green"],
+    ["Red", "Green", "Green", "Green", "Green", "Green", "Green", "Green"],
+    ["Red", "Green", "Green", "Green", "Green", "Green", "Green", "Green"],
+    ["Green", "Green", "Green", "Green", "Green", "Green", "Green", "Green"],
+    ["Green", "Green", "Green", "Green", "Green", "Green", "Green", "Green"],
+    ["Green", "Green", "Green", "Green", "Green", "Green", "Green", "Green"]
+  ]
+}
