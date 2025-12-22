@@ -1,0 +1,10 @@
+version: "3.9"
+
+services:
+  gg-poker-vision-engine:
+    build: .
+    container_name: gg-poker-vision-engine
+    volumes:
+      - ./charts:/app/charts
+      - ./data:/app/data
+    restart: unless-stopped
