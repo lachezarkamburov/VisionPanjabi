@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 from strategy import StrategyEngine
@@ -7,7 +8,7 @@ from vision_agent import ROI, VisionAgent
 
 def build_agent() -> VisionAgent:
     return VisionAgent(
-        stream_url="https://twitch.tv/ggpoker",
+        stream_url=os.getenv("STREAM_URL", "https://twitch.tv/ggpoker"),
         templates_dir=Path("/app/templates"),
         roi_hero_left=ROI(x=980, y=880, width=80, height=80),
         roi_hero_right=ROI(x=1070, y=880, width=80, height=80),
@@ -18,6 +19,7 @@ def build_agent() -> VisionAgent:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    logging.info("Project started")
     agent = build_agent()
     strategy_engine = StrategyEngine(Path("/app/charts/strategy_matrix.json"))
 

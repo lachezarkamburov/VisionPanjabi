@@ -1,4 +1,5 @@
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
@@ -55,6 +56,7 @@ class VisionAgent:
         return templates
 
     def _get_stream_url(self) -> str:
+        self.logger.info("Stream to load data initialized")
         streams = streamlink.streams(self.stream_url)
         if not streams:
             raise RuntimeError("No streams found for the provided URL.")
@@ -62,6 +64,7 @@ class VisionAgent:
         return stream.to_url()
 
     def _capture_frame(self) -> np.ndarray:
+        start_time = time.monotonic()
         stream_url = self._get_stream_url()
         capture = cv2.VideoCapture(stream_url)
         if not capture.isOpened():
@@ -70,6 +73,8 @@ class VisionAgent:
         capture.release()
         if not success or frame is None:
             raise RuntimeError("Failed to capture frame from stream.")
+        elapsed = time.monotonic() - start_time
+        self.logger.info("Loaded data in %.2f seconds", elapsed)
         return frame
 
     def _crop_roi(self, frame: np.ndarray, roi: ROI) -> np.ndarray:
