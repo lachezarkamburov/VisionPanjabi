@@ -24,6 +24,37 @@ class GameState:
     dealer_button: bool
 
 
+class TemplateMatcher:
+    def __init__(self, templates_dir: Path, match_threshold: float = 0.92) -> None:
+        self.templates_dir = templates_dir
+        self.match_threshold = match_threshold
+        self.templates = self._load_templates()
+
+    def _load_templates(self) -> Dict[str, np.ndarray]:
+        templates: Dict[str, np.ndarray] = {}
+        for template_path in self.templates_dir.glob("*.png"):
+            template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
+            if template is None:
+                continue
+            templates[template_path.stem] = template
+        return templates
+
+    def match(self, roi: np.ndarray) -> Optional[str]:
+        best_name = None
+        best_score = 0.0
+        for name, template in self.templates.items():
+            if roi.shape[0] < template.shape[0] or roi.shape[1] < template.shape[1]:
+                continue
+            result = cv2.matchTemplate(roi, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(result)
+            if max_val > best_score:
+                best_score = max_val
+                best_name = name
+        if best_score >= self.match_threshold:
+            return best_name
+        return None
+
+
 class VisionAgent:
     def __init__(
         self,
@@ -41,6 +72,9 @@ class VisionAgent:
         self.roi_hero_right = roi_hero_right
         self.roi_stack = roi_stack
         self.roi_button = roi_button
+        self.matcher = TemplateMatcher(templates_dir, match_threshold)
+        self.logger = logging.getLogger(self.__class__.__name__)
+
         self.match_threshold = match_threshold
         self.templates = self._load_templates()
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -61,6 +95,7 @@ class VisionAgent:
         stream = streams.get("best") or next(iter(streams.values()))
         return stream.to_url()
 
+    def capture_frame(self) -> np.ndarray:
     def _capture_frame(self) -> np.ndarray:
         stream_url = self._get_stream_url()
         capture = cv2.VideoCapture(stream_url)
@@ -75,6 +110,11 @@ class VisionAgent:
     def _crop_roi(self, frame: np.ndarray, roi: ROI) -> np.ndarray:
         return frame[roi.y : roi.y + roi.height, roi.x : roi.x + roi.width]
 
+    def read_game_state(self) -> GameState:
+        frame = self.capture_frame()
+        hero_left = self.matcher.match(self._crop_roi(frame, self.roi_hero_left))
+        hero_right = self.matcher.match(self._crop_roi(frame, self.roi_hero_right))
+        dealer_button_match = self.matcher.match(self._crop_roi(frame, self.roi_button))
     def _match_template(self, roi: np.ndarray) -> Optional[str]:
         best_name = None
         best_score = 0.0

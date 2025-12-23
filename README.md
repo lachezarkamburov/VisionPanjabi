@@ -1,5 +1,10 @@
 # gg-poker-vision-engine
 
+A Dockerized poker strategy engine that ingests Twitch frames from GGPoker, uses OpenCV template matching for hero card recognition, and maps the resulting hand into an 8x8 strategy matrix with multi-table support.
+
+## Features
+
+- **Multi-table vision agent** powered by OpenCV + Streamlink for frame capture (up to 6 tables).
 A Dockerized poker strategy engine that ingests Twitch frames from GGPoker, uses OpenCV template matching for hero card recognition, and maps the resulting hand into an 8x8 strategy matrix.
 
 ## Features
@@ -16,11 +21,14 @@ A Dockerized poker strategy engine that ingests Twitch frames from GGPoker, uses
 ./templates
 ./charts
 ./data
+./config.yaml
 ```
 
 ## Setup
 
 1. Add your GGPoker card templates (`.png`) to `templates/`.
+2. Update `config.yaml` with your stream URL and ROI coordinates.
+3. (Optional) Define manual table layouts if auto-detection is not reliable.
 2. (Optional) Update ROI coordinates in `src/main.py` to match your stream layout.
 
 ### Docker
@@ -32,6 +40,26 @@ docker-compose up --build
 ## Configuration Notes
 
 - The vision agent uses template matching to achieve high-confidence card detection.
+- Multi-table detection defaults to `auto_detect: true` and can track up to 6 tables.
+- The strategy engine checks the 8x8 matrix. If the matched hand is in a **Red** zone, it outputs **"4-Bet Bluff"**.
+
+## Example Output
+
+```json
+{
+  "table_1": {
+    "cards": ["As", "Kh"],
+    "stack_size": "140px",
+    "dealer_button": false,
+    "strategy": {
+      "hand": "AK",
+      "zone": "Red",
+      "action": "4-Bet Bluff"
+    }
+  }
+}
+```
+
 - The strategy engine checks the 8x8 matrix. If the matched hand is in a **Red** zone, it outputs **"4-Bet Bluff"**.
 
 ## Strategy Matrix Format
