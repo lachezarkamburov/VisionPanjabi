@@ -5,6 +5,7 @@ from typing import List
 import cv2
 import numpy as np
 
+from card_recognizer import CardRecognizer
 from multi_table import MultiTableVision
 from vision_agent import ROI
 
@@ -58,6 +59,7 @@ def auto_extract_templates(
     templates_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Templates folder empty - extracting from video...")
 
+    recognizer = CardRecognizer()
     frame = vision.capture_frame()
     layouts = vision.get_table_layouts(frame)
     if not layouts:
@@ -66,6 +68,7 @@ def auto_extract_templates(
 
     template_images: List[np.ndarray] = []
     template_count = 0
+    unrecognized_count = 0
 
     for table_index, layout in enumerate(layouts, start=1):
         left_roi = vision.get_table_roi(layout, vision.base_rois.hero_left)
@@ -74,8 +77,21 @@ def auto_extract_templates(
         left_card = _crop(frame, left_roi)
         right_card = _crop(frame, right_roi)
 
-        left_path = templates_dir / f"card_table_{table_index}_left.png"
-        right_path = templates_dir / f"card_table_{table_index}_right.png"
+        left_name = recognizer.recognize_card(left_card)
+        right_name = recognizer.recognize_card(right_card)
+
+        left_filename = f"{left_name}.png" if left_name else f"card_table_{table_index}_left.png"
+        right_filename = f"{right_name}.png" if right_name else f"card_table_{table_index}_right.png"
+
+        if not left_name:
+            unrecognized_count += 1
+            logger.warning("Could not recognize card from table %s left position", table_index)
+        if not right_name:
+            unrecognized_count += 1
+            logger.warning("Could not recognize card from table %s right position", table_index)
+
+        left_path = templates_dir / left_filename
+        right_path = templates_dir / right_filename
 
         cv2.imwrite(str(left_path), left_card)
         cv2.imwrite(str(right_path), right_card)
@@ -93,5 +109,11 @@ def auto_extract_templates(
         logger.info("Template preview saved to %s", preview_path)
 
     vision.reload_templates()
+    if unrecognized_count:
+        logger.warning(
+            "Failed to recognize %s cards. Please manually rename files in %s using format: Ah.png, Kc.png, etc.",
+            unrecognized_count,
+            templates_dir,
+        )
     logger.info("Extracted %s card templates from video", template_count)
     return template_count

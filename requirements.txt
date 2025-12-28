@@ -1,3 +1,8 @@
 opencv-python==4.10.0.84
 numpy>=2.0.0
 PyYAML==6.0.2
+# NOTE: pytesseract requires the Tesseract OCR binary to be installed:
+# Windows: choco install tesseract
+# Mac: brew install tesseract
+# Linux: sudo apt-get install tesseract-ocr
+pytesseract==0.3.10
