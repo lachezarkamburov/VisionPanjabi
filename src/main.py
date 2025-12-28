@@ -123,6 +123,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run automatic ROI detection before analysis to update config.yaml.",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Save debug visualization images during detection.",
+    )
     return parser
 
 
@@ -146,12 +151,14 @@ def _estimate_additional_rois(hero_left: dict, hero_right: dict) -> tuple[dict, 
     return stack_roi, dealer_button_roi
 
 
-def _run_auto_roi_detection(config_path: Path, config: dict, video_path: Path, max_tables: int) -> dict | None:
+def _run_auto_roi_detection(
+    config_path: Path, config: dict, video_path: Path, max_tables: int, debug: bool = False
+) -> dict | None:
     logger = logging.getLogger(__name__)
     detector = AutoCardDetector(str(video_path))
     try:
         frame = detector.load_frame()
-        tables = detector.detect_tables_and_cards(frame, num_tables=max_tables)
+        tables = detector.detect_tables_and_cards(frame, num_tables=max_tables, debug=debug)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning("Automatic ROI detection failed: %s", exc)
         return None
@@ -218,6 +225,7 @@ def main() -> None:
             config,
             video_path,
             config.get("multi_table", {}).get("max_tables", 4),
+            debug=args.debug,
         )
         if detected_config:
             config = detected_config
