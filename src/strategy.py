@@ -17,9 +17,26 @@ class StrategyEngine:
         self.ranks, self.matrix = self._load_matrix()
 
     def _load_matrix(self) -> tuple[list[str], list[list[str]]]:
+        if not self.matrix_path.exists():
+            raise FileNotFoundError(f"Strategy matrix file not found: {self.matrix_path}")
         with self.matrix_path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
-        return payload["ranks"], payload["matrix"]
+
+        if not isinstance(payload, dict):
+            raise ValueError("Strategy matrix must be a JSON object")
+
+        ranks = payload.get("ranks")
+        matrix = payload.get("matrix")
+        if not isinstance(ranks, list) or not ranks or not all(isinstance(r, str) for r in ranks):
+            raise ValueError("ranks must be a non-empty list of strings")
+        if not isinstance(matrix, list) or len(matrix) != len(ranks):
+            raise ValueError("matrix must be a square list matching the ranks length")
+
+        for row in matrix:
+            if not isinstance(row, list) or len(row) != len(ranks):
+                raise ValueError("Each matrix row must match the ranks length")
+
+        return ranks, matrix
 
     def _hand_to_indices(self, rank_left: str, rank_right: str) -> Optional[tuple[int, int]]:
         if rank_left not in self.ranks or rank_right not in self.ranks:

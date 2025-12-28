@@ -3,6 +3,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 import cv2
 import numpy as np
@@ -16,6 +17,19 @@ class ROI:
     width: int
     height: int
 
+    def validate_within(self, frame_shape: tuple[int, ...]) -> None:
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("ROI width and height must be positive")
+
+        frame_height, frame_width = frame_shape[:2]
+        if self.x < 0 or self.y < 0:
+            raise ValueError("ROI coordinates must be non-negative")
+
+        if self.x + self.width > frame_width or self.y + self.height > frame_height:
+            raise ValueError(
+                "ROI must fit entirely within the frame bounds"
+            )
+
 
 @dataclass
 class GameState:
@@ -27,6 +41,11 @@ class GameState:
 
 class TemplateMatcher:
     def __init__(self, templates_dir: Path, match_threshold: float = 0.92) -> None:
+        if not templates_dir.exists():
+            raise FileNotFoundError(f"Templates directory not found: {templates_dir}")
+        if not templates_dir.is_dir():
+            raise NotADirectoryError(f"Templates path is not a directory: {templates_dir}")
+
         self.templates_dir = templates_dir
         self.match_threshold = match_threshold
         self.templates = self._load_templates()
@@ -67,7 +86,7 @@ class VisionAgent:
         roi_button: ROI,
         match_threshold: float = 0.92,
     ) -> None:
-        self.stream_url = stream_url
+        self.stream_url = self._validate_stream_url(stream_url)
         self.templates_dir = templates_dir
         self.roi_hero_left = roi_hero_left
         self.roi_hero_right = roi_hero_right
@@ -77,17 +96,6 @@ class VisionAgent:
         self.logger = logging.getLogger(self.__class__.__name__)
 
         self.match_threshold = match_threshold
-        self.templates = self._load_templates()
-        self.logger = logging.getLogger(self.__class__.__name__)
-
-    def _load_templates(self) -> Dict[str, np.ndarray]:
-        templates: Dict[str, np.ndarray] = {}
-        for template_path in self.templates_dir.glob("*.png"):
-            template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
-            if template is None:
-                continue
-            templates[template_path.stem] = template
-        return templates
 
     def _get_stream_url(self) -> str:
         self.logger.info("Stream to load data initialized")
@@ -98,6 +106,8 @@ class VisionAgent:
         return stream.to_url()
 
     def capture_frame(self) -> np.ndarray:
+        return self._capture_frame()
+
     def _capture_frame(self) -> np.ndarray:
         start_time = time.monotonic()
         stream_url = self._get_stream_url()
@@ -113,35 +123,14 @@ class VisionAgent:
         return frame
 
     def _crop_roi(self, frame: np.ndarray, roi: ROI) -> np.ndarray:
+        roi.validate_within(frame.shape)
         return frame[roi.y : roi.y + roi.height, roi.x : roi.x + roi.width]
 
     def read_game_state(self) -> GameState:
-        frame = self.capture_frame()
+        frame = self._capture_frame()
         hero_left = self.matcher.match(self._crop_roi(frame, self.roi_hero_left))
         hero_right = self.matcher.match(self._crop_roi(frame, self.roi_hero_right))
         dealer_button_match = self.matcher.match(self._crop_roi(frame, self.roi_button))
-    def _match_template(self, roi: np.ndarray) -> Optional[str]:
-        best_name = None
-        best_score = 0.0
-        for name, template in self.templates.items():
-            if roi.shape[0] < template.shape[0] or roi.shape[1] < template.shape[1]:
-                continue
-            result = cv2.matchTemplate(roi, template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(result)
-            if max_val > best_score:
-                best_score = max_val
-                best_name = name
-        if best_score >= self.match_threshold:
-            return best_name
-        return None
-
-    def read_game_state(self) -> GameState:
-        frame = self._capture_frame()
-        hero_left = self._match_template(self._crop_roi(frame, self.roi_hero_left))
-        hero_right = self._match_template(self._crop_roi(frame, self.roi_hero_right))
-        dealer_button_match = self._match_template(
-            self._crop_roi(frame, self.roi_button)
-        )
         stack_roi = self._crop_roi(frame, self.roi_stack)
         stack_size = f"{stack_roi.shape[1]}px"
         game_state = GameState(
@@ -152,3 +141,14 @@ class VisionAgent:
         )
         self.logger.info("Captured game state: %s", game_state)
         return game_state
+
+    @staticmethod
+    def _validate_stream_url(stream_url: str) -> str:
+        if not stream_url or not stream_url.strip():
+            raise ValueError("Stream URL must be provided")
+
+        parsed = urlparse(stream_url)
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError("Stream URL must include a scheme and hostname")
+
+        return stream_url
