@@ -1,5 +1,5 @@
 stream:
-  url: "video/poker_game.mp4"  # Local video file path
+  url: "video/2025-12-28 21-07-39.mp4"  # Local video file path
 
 multi_table:
   auto_detect: false
