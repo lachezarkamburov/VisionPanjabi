@@ -68,7 +68,19 @@ class CardRecognizer:
                 return text[0]
 
         except ImportError:
-            self.logger.warning("pytesseract not installed, using fallback method")
+            self.logger.warning(
+                "pytesseract not installed, using fallback method. "
+                "Install with: Windows 'choco install tesseract', "
+                "Mac 'brew install tesseract', Linux 'sudo apt-get install tesseract-ocr'"
+            )
+            return self._detect_rank_fallback(thresh)
+        except Exception as exc:
+            self.logger.warning(
+                "OCR failed (%s), using fallback method. "
+                "Install Tesseract with: Windows 'choco install tesseract', "
+                "Mac 'brew install tesseract', Linux 'sudo apt-get install tesseract-ocr'",
+                type(exc).__name__,
+            )
             return self._detect_rank_fallback(thresh)
 
         return None
