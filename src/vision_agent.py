@@ -76,19 +76,6 @@ class VisionAgent:
         self.matcher = TemplateMatcher(templates_dir, match_threshold)
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        self.match_threshold = match_threshold
-        self.templates = self._load_templates()
-        self.logger = logging.getLogger(self.__class__.__name__)
-
-    def _load_templates(self) -> Dict[str, np.ndarray]:
-        templates: Dict[str, np.ndarray] = {}
-        for template_path in self.templates_dir.glob("*.png"):
-            template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
-            if template is None:
-                continue
-            templates[template_path.stem] = template
-        return templates
-
     def _get_stream_url(self) -> str:
         self.logger.info("Stream to load data initialized")
         streams = streamlink.streams(self.stream_url)
@@ -98,7 +85,6 @@ class VisionAgent:
         return stream.to_url()
 
     def capture_frame(self) -> np.ndarray:
-    def _capture_frame(self) -> np.ndarray:
         start_time = time.monotonic()
         stream_url = self._get_stream_url()
         capture = cv2.VideoCapture(stream_url)
@@ -120,28 +106,6 @@ class VisionAgent:
         hero_left = self.matcher.match(self._crop_roi(frame, self.roi_hero_left))
         hero_right = self.matcher.match(self._crop_roi(frame, self.roi_hero_right))
         dealer_button_match = self.matcher.match(self._crop_roi(frame, self.roi_button))
-    def _match_template(self, roi: np.ndarray) -> Optional[str]:
-        best_name = None
-        best_score = 0.0
-        for name, template in self.templates.items():
-            if roi.shape[0] < template.shape[0] or roi.shape[1] < template.shape[1]:
-                continue
-            result = cv2.matchTemplate(roi, template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(result)
-            if max_val > best_score:
-                best_score = max_val
-                best_name = name
-        if best_score >= self.match_threshold:
-            return best_name
-        return None
-
-    def read_game_state(self) -> GameState:
-        frame = self._capture_frame()
-        hero_left = self._match_template(self._crop_roi(frame, self.roi_hero_left))
-        hero_right = self._match_template(self._crop_roi(frame, self.roi_hero_right))
-        dealer_button_match = self._match_template(
-            self._crop_roi(frame, self.roi_button)
-        )
         stack_roi = self._crop_roi(frame, self.roi_stack)
         stack_size = f"{stack_roi.shape[1]}px"
         game_state = GameState(
