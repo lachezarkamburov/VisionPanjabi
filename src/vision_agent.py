@@ -42,6 +42,10 @@ class TemplateMatcher:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.templates = self._load_templates()
 
+    def reload_templates(self) -> None:
+        """Reload templates from disk."""
+        self.templates = self._load_templates()
+
     def _load_templates(self) -> Dict[str, np.ndarray]:
         templates: Dict[str, np.ndarray] = {}
         if not self.templates_dir.exists():
@@ -106,6 +110,10 @@ class VisionAgent:
 
         self.video_capture: Optional[cv2.VideoCapture] = None
         self.is_local_file = self._is_local_file()
+
+    def reload_templates(self) -> None:
+        """Reload matcher templates (used after auto extraction)."""
+        self.matcher.reload_templates()
 
     def _is_local_file(self) -> bool:
         """Check if stream_url is a local file path."""

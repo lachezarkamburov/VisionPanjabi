@@ -1,11 +1,14 @@
+import argparse
 import json
 import logging
+import time
 from pathlib import Path
 
 import yaml
 
 from multi_table import MultiTableVision, TableROISet
 from strategy import StrategyEngine
+from template_extractor import auto_extract_templates
 from vision_agent import ROI
 
 
@@ -48,6 +51,75 @@ def print_table_result(table_id: str, table_data: dict, strategy_result=None) ->
     print(f"{'='*60}\n")
 
 
+def analyze_tables(vision: MultiTableVision, strategy: StrategyEngine) -> None:
+    """Run a single analysis pass and print results."""
+    logger = logging.getLogger(__name__)
+    print("\n🔍 Analyzing poker tables...\n")
+    tables_data = vision.read_all_tables()
+    if not tables_data:
+        logger.warning("No tables detected in current frame")
+        return
+
+    # Build complete output with strategy
+    output = {"tables": {}}
+
+    for table_id, table_info in tables_data.items():
+        cards = table_info["cards"]
+        table_output = {
+            "cards": cards,
+            "stack_size": table_info["stack_size"],
+            "dealer_button": table_info["dealer_button"],
+        }
+
+        strategy_result = None
+        if cards[0] and cards[1]:
+            rank_left = cards[0][0].upper()
+            rank_right = cards[1][0].upper()
+            strategy_result = strategy.lookup(rank_left, rank_right)
+
+            table_output["strategy"] = {
+                "hand": strategy_result.hand,
+                "zone": strategy_result.zone,
+                "action": strategy_result.action,
+            }
+
+        output["tables"][table_id] = table_output
+
+        # Print formatted output for each table
+        print_table_result(table_id, table_output, strategy_result)
+
+    # Print JSON output
+    print("\n" + "=" * 60)
+    print("📄 JSON OUTPUT:")
+    print("=" * 60)
+    print(json.dumps(output, indent=2))
+    print("=" * 60 + "\n")
+
+    logger.info("VisionPanjabi engine completed successfully")
+    print("✅ Analysis complete!\n")
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="VisionPanjabi - Poker Vision Engine")
+    parser.add_argument(
+        "--extract-templates",
+        action="store_true",
+        help="Force re-extraction of templates from the video before analysis.",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=0.0,
+        help="Seconds between repeated analyses. Use 0 for a single run.",
+    )
+    parser.add_argument(
+        "--preview-templates",
+        action="store_true",
+        help="Save a preview image when extracting templates.",
+    )
+    return parser
+
+
 def main() -> None:
     """Main entry point for vision engine."""
     logging.basicConfig(
@@ -55,6 +127,7 @@ def main() -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     logger = logging.getLogger(__name__)
+    args = build_arg_parser().parse_args()
 
     print_banner()
     logger.info("VisionPanjabi engine starting...")
@@ -100,51 +173,31 @@ def main() -> None:
         manual_layouts=config["multi_table"].get("layouts", []),
     )
 
+    # Auto extract templates if needed
+    auto_extract_templates(
+        vision,
+        Path("templates"),
+        force=args.extract_templates,
+        preview=args.preview_templates,
+    )
+
     # Initialize strategy engine
     strategy = StrategyEngine(Path(config["strategy"]["matrix_path"]))
     logger.info("Strategy engine initialized")
 
-    # Read all tables
-    print("\n🔍 Analyzing poker tables...\n")
-    tables_data = vision.read_all_tables()
+    interval = max(args.interval, 0.0)
+    if interval == 0:
+        analyze_tables(vision, strategy)
+        return
 
-    # Build complete output with strategy
-    output = {"tables": {}}
-
-    for table_id, table_info in tables_data.items():
-        cards = table_info["cards"]
-        table_output = {
-            "cards": cards,
-            "stack_size": table_info["stack_size"],
-            "dealer_button": table_info["dealer_button"],
-        }
-
-        strategy_result = None
-        if cards[0] and cards[1]:
-            rank_left = cards[0][0].upper()
-            rank_right = cards[1][0].upper()
-            strategy_result = strategy.lookup(rank_left, rank_right)
-
-            table_output["strategy"] = {
-                "hand": strategy_result.hand,
-                "zone": strategy_result.zone,
-                "action": strategy_result.action,
-            }
-
-        output["tables"][table_id] = table_output
-
-        # Print formatted output for each table
-        print_table_result(table_id, table_output, strategy_result)
-
-    # Print JSON output
-    print("\n" + "=" * 60)
-    print("📄 JSON OUTPUT:")
-    print("=" * 60)
-    print(json.dumps(output, indent=2))
-    print("=" * 60 + "\n")
-
-    logger.info("VisionPanjabi engine completed successfully")
-    print("✅ Analysis complete!\n")
+    logger.info("Running continuous analysis every %.2f seconds", interval)
+    try:
+        while True:
+            analyze_tables(vision, strategy)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        logger.info("Continuous analysis stopped by user")
+        print("\n🛑 Stopped continuous analysis.\n")
 
 
 if __name__ == "__main__":
