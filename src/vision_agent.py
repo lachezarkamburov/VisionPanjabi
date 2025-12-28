@@ -3,6 +3,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 import cv2
 import numpy as np
@@ -16,6 +17,19 @@ class ROI:
     width: int
     height: int
 
+    def validate_within(self, frame_shape: tuple[int, ...]) -> None:
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("ROI width and height must be positive")
+
+        frame_height, frame_width = frame_shape[:2]
+        if self.x < 0 or self.y < 0:
+            raise ValueError("ROI coordinates must be non-negative")
+
+        if self.x + self.width > frame_width or self.y + self.height > frame_height:
+            raise ValueError(
+                "ROI must fit entirely within the frame bounds"
+            )
+
 
 @dataclass
 class GameState:
@@ -27,17 +41,32 @@ class GameState:
 
 class TemplateMatcher:
     def __init__(self, templates_dir: Path, match_threshold: float = 0.92) -> None:
+        if not templates_dir.exists():
+            raise FileNotFoundError(f"Templates directory not found: {templates_dir}")
+        if not templates_dir.is_dir():
+            raise NotADirectoryError(f"Templates path is not a directory: {templates_dir}")
+
         self.templates_dir = templates_dir
         self.match_threshold = match_threshold
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.templates = self._load_templates()
 
     def _load_templates(self) -> Dict[str, np.ndarray]:
         templates: Dict[str, np.ndarray] = {}
+        if not self.templates_dir.exists():
+            raise FileNotFoundError(f"Templates directory not found: {self.templates_dir}")
+        if not self.templates_dir.is_dir():
+            raise NotADirectoryError(
+                f"Templates path is not a directory: {self.templates_dir}"
+            )
         for template_path in self.templates_dir.glob("*.png"):
             template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
             if template is None:
+                self.logger.warning("Failed to load template: %s", template_path)
                 continue
             templates[template_path.stem] = template
+        if not templates:
+            raise RuntimeError(f"No templates could be loaded from {self.templates_dir}")
         return templates
 
     def match(self, roi: np.ndarray) -> Optional[str]:
@@ -68,75 +97,95 @@ class VisionAgent:
         match_threshold: float = 0.92,
         min_capture_interval: float = 0.5,
     ) -> None:
-        self.stream_url = stream_url
+        self.stream_url = self._validate_stream_url(stream_url)
         self.templates_dir = templates_dir
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.roi_hero_left = roi_hero_left
         self.roi_hero_right = roi_hero_right
         self.roi_stack = roi_stack
         self.roi_button = roi_button
+        self.match_threshold = match_threshold
         self.matcher = TemplateMatcher(templates_dir, match_threshold)
-        self.min_capture_interval = min_capture_interval
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.templates = self._load_templates()
 
-        self._frame_cache: Optional[np.ndarray] = None
-        self._frame_cache_time: float = 0.0
-        self._state_cache: Optional[GameState] = None
-        self._state_cache_time: float = 0.0
+    def _load_templates(self) -> Dict[str, np.ndarray]:
+        templates: Dict[str, np.ndarray] = {}
+        if not self.templates_dir.exists():
+            raise FileNotFoundError(f"Templates directory not found: {self.templates_dir}")
+        if not self.templates_dir.is_dir():
+            raise NotADirectoryError(
+                f"Templates path is not a directory: {self.templates_dir}"
+            )
+        for template_path in self.templates_dir.glob("*.png"):
+            template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
+            if template is None:
+                self.logger.warning("Failed to load template: %s", template_path)
+                continue
+            templates[template_path.stem] = template
+        if not templates:
+            raise RuntimeError(f"No templates could be loaded from {self.templates_dir}")
+        return templates
 
     def _get_stream_url(self) -> str:
         self.logger.info("Stream to load data initialized")
-        streams = streamlink.streams(self.stream_url)
+        try:
+            streams = streamlink.streams(self.stream_url)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            raise RuntimeError("Failed to retrieve streams for the provided URL.") from exc
         if not streams:
             raise RuntimeError("No streams found for the provided URL.")
         stream = streams.get("best") or next(iter(streams.values()))
         return stream.to_url()
 
-    def capture_frame(self) -> np.ndarray:
-        now = time.monotonic()
-        if (
-            self._frame_cache is not None
-            and now - self._frame_cache_time < self.min_capture_interval
-        ):
-            self.logger.debug(
-                "Reusing cached frame (age %.2fs)", now - self._frame_cache_time
-            )
-            return self._frame_cache
-
-        frame = self._capture_frame()
-        self._frame_cache = frame
-        self._frame_cache_time = time.monotonic()
-        self._state_cache = None
-        return frame
-
     def _capture_frame(self) -> np.ndarray:
         start_time = time.monotonic()
         stream_url = self._get_stream_url()
         capture = cv2.VideoCapture(stream_url)
-        if not capture.isOpened():
-            raise RuntimeError("Unable to open the stream via OpenCV.")
-        success, frame = capture.read()
-        capture.release()
-        if not success or frame is None:
-            raise RuntimeError("Failed to capture frame from stream.")
+        try:
+            if not capture.isOpened():
+                raise RuntimeError("Unable to open the stream via OpenCV.")
+            success, frame = capture.read()
+            if not success or frame is None:
+                raise RuntimeError("Failed to capture frame from stream.")
+        finally:
+            capture.release()
         elapsed = time.monotonic() - start_time
         self.logger.info("Loaded data in %.2f seconds", elapsed)
         return frame
 
+    def capture_frame(self) -> np.ndarray:
+        try:
+            return self._capture_frame()
+        except Exception as exc:
+            self.logger.error("Frame capture failed: %s", exc)
+            raise
+
     def _crop_roi(self, frame: np.ndarray, roi: ROI) -> np.ndarray:
+        roi.validate_within(frame.shape)
         return frame[roi.y : roi.y + roi.height, roi.x : roi.x + roi.width]
+
+    def _match_template(self, roi: np.ndarray) -> Optional[str]:
+        best_name = None
+        best_score = 0.0
+        for name, template in self.templates.items():
+            if roi.shape[0] < template.shape[0] or roi.shape[1] < template.shape[1]:
+                continue
+            result = cv2.matchTemplate(roi, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(result)
+            if max_val > best_score:
+                best_score = max_val
+                best_name = name
+        if best_score >= self.match_threshold:
+            return best_name
+        return None
 
     def read_game_state(self) -> GameState:
         frame = self.capture_frame()
-        if self._state_cache is not None and self._state_cache_time == self._frame_cache_time:
-            self.logger.debug(
-                "Returning cached game state (frame age %.2fs)",
-                time.monotonic() - self._frame_cache_time,
-            )
-            return self._state_cache
-
-        hero_left = self.matcher.match(self._crop_roi(frame, self.roi_hero_left))
-        hero_right = self.matcher.match(self._crop_roi(frame, self.roi_hero_right))
-        dealer_button_match = self.matcher.match(self._crop_roi(frame, self.roi_button))
+        hero_left = self._match_template(self._crop_roi(frame, self.roi_hero_left))
+        hero_right = self._match_template(self._crop_roi(frame, self.roi_hero_right))
+        dealer_button_match = self._match_template(
+            self._crop_roi(frame, self.roi_button)
+        )
         stack_roi = self._crop_roi(frame, self.roi_stack)
         stack_size = f"{stack_roi.shape[1]}px"
         game_state = GameState(
@@ -149,3 +198,14 @@ class VisionAgent:
         self._state_cache_time = self._frame_cache_time
         self.logger.info("Captured game state: %s", game_state)
         return game_state
+
+    @staticmethod
+    def _validate_stream_url(stream_url: str) -> str:
+        if not stream_url or not stream_url.strip():
+            raise ValueError("Stream URL must be provided")
+
+        parsed = urlparse(stream_url)
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError("Stream URL must include a scheme and hostname")
+
+        return stream_url
