@@ -77,7 +77,28 @@ python src/main.py
 
 VisionPanjabi needs templates for all 52 playing cards. You have two options:
 
-### Option 1: Automated Extraction (Recommended)
+### Option 1: Screenshot-Based Extraction (Recommended)
+
+Extract templates automatically from a folder of poker screenshots:
+
+```bash
+python src/main.py --extract-templates screenshots/
+```
+
+Workflow:
+1. Capture clear screenshots of your tables.
+2. Place them in a folder (e.g., `screenshots/`).
+3. Run the command above.
+4. Label any cards the system could not auto-identify.
+
+Best results:
+- Use crisp screenshots with the full card visible.
+- Keep resolutions consistent across images.
+- Avoid heavy compression or motion blur.
+
+Templates are saved to `templates/` and can be validated with `python src/validate_templates.py`.
+
+### Option 2: Automated Extraction from Video
 
 Extract templates automatically from your poker video:
 
@@ -93,7 +114,7 @@ The script will:
 
 Typical extraction time: 5-10 minutes for 40-50 cards.
 
-### Option 2: Manual Creation
+### Option 3: Manual Creation
 
 Create templates manually by cropping card corners:
 1. Pause video on clear card
