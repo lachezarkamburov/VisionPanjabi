@@ -25,8 +25,10 @@ def load_config(config_path: Path) -> Dict[str, object]:
     if not isinstance(config, dict):
         raise ValueError("Config file must contain a YAML mapping")
 
-    return validate_config(config, config_path)
-
+def rank_from_template(card_name: Optional[str]) -> Optional[str]:
+    if not card_name:
+        return None
+    return card_name[0].upper()
 
 def validate_config(config: Dict[str, object], config_path: Path) -> Dict[str, object]:
     stream_cfg = config.get("stream") or {}
@@ -43,71 +45,57 @@ def validate_config(config: Dict[str, object], config_path: Path) -> Dict[str, o
     if not templates_dir.is_dir():
         raise NotADirectoryError(f"Templates path is not a directory: {templates_dir}")
 
-    roi_cfg = config.get("roi")
-    if not isinstance(roi_cfg, dict):
-        raise ValueError("roi must be a mapping of ROI definitions")
-
-    rois: Dict[str, ROI] = {}
-    for name in ("hero_left", "hero_right", "stack", "dealer_button"):
-        roi_values = roi_cfg.get(name)
-        if not isinstance(roi_values, dict):
-            raise ValueError(f"roi.{name} must be a mapping")
-        try:
-            roi = ROI(
-                x=int(roi_values["x"]),
-                y=int(roi_values["y"]),
-                width=int(roi_values["width"]),
-                height=int(roi_values["height"]),
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"roi.{name} must include integer x, y, width, height") from exc
-
-        if roi.width <= 0 or roi.height <= 0:
-            raise ValueError(f"roi.{name} width and height must be positive")
-        if roi.x < 0 or roi.y < 0:
-            raise ValueError(f"roi.{name} x and y must be non-negative")
-        rois[name] = roi
-
-    strategy_cfg = config.get("strategy") or {}
-    matrix_path = Path(strategy_cfg.get("matrix_path") or DEFAULT_MATRIX_PATH)
-    if not matrix_path.exists():
-        raise FileNotFoundError(f"Strategy matrix file not found: {matrix_path}")
-
-    return {
-        "stream_url": stream_url,
-        "templates_dir": templates_dir,
-        "roi": rois,
-        "matrix_path": matrix_path,
-        "config_path": config_path,
-    }
-
-
-def build_agent(config: Dict[str, object]) -> VisionAgent:
-    roi_cfg: Dict[str, ROI] = config["roi"]  # type: ignore[assignment]
-    return VisionAgent(
-        stream_url=config["stream_url"],  # type: ignore[arg-type]
-        templates_dir=config["templates_dir"],  # type: ignore[arg-type]
-        roi_hero_left=roi_cfg["hero_left"],
-        roi_hero_right=roi_cfg["hero_right"],
-        roi_stack=roi_cfg["stack"],
-        roi_button=roi_cfg["dealer_button"],
+def build_multi_table_agent(config: dict) -> MultiTableVision:
+    roi_config = config["roi"]
+    base_rois = TableROISet(
+        hero_left=ROI(**roi_config["hero_left"]),
+        hero_right=ROI(**roi_config["hero_right"]),
+        stack=ROI(**roi_config["stack"]),
+        dealer_button=ROI(**roi_config["dealer_button"]),
     )
+    multi_table_config = config.get("multi_table", {})
+    return MultiTableVision(
+        stream_url=config["stream"]["url"],
+        templates_dir=Path(config.get("templates_dir", "/app/templates")),
+        base_rois=base_rois,
+        auto_detect=multi_table_config.get("auto_detect", True),
+        max_tables=multi_table_config.get("max_tables", 6),
+        manual_layouts=multi_table_config.get("layouts", []),
+    )
+
+
+def apply_strategy(
+    strategy_engine: StrategyEngine, table_states: dict[str, dict[str, object]]
+) -> dict[str, dict[str, object]]:
+    for table_name, state in table_states.items():
+        cards = state.get("cards", [])
+        rank_left = rank_from_template(cards[0]) if len(cards) > 0 else None
+        rank_right = rank_from_template(cards[1]) if len(cards) > 1 else None
+        result = strategy_engine.lookup(rank_left, rank_right)
+        state["strategy"] = {
+            "hand": result.hand,
+            "zone": result.zone,
+            "action": result.action,
+        }
+        table_states[table_name] = state
+    return table_states
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    logging.info("Project started")
+    config_path = Path(os.getenv("CONFIG_PATH", "config.yaml"))
+    logging.info("Loading configuration from %s", config_path)
 
-    config_path = Path(os.getenv(CONFIG_ENV_VAR, DEFAULT_CONFIG_PATH))
     config = load_config(config_path)
+    strategy_engine = StrategyEngine(Path(config["strategy"]["matrix_path"]))
+    multi_table_agent = build_multi_table_agent(config)
 
-    agent = build_agent(config)
-    strategy_engine = StrategyEngine(config["matrix_path"])  # type: ignore[arg-type]
+    table_states = multi_table_agent.read_all_tables()
+    evaluated_tables = apply_strategy(strategy_engine, table_states)
 
-    game_state = agent.read_game_state()
-    result = strategy_engine.lookup(game_state.hero_left, game_state.hero_right)
-
-    logging.info("Hand %s in zone %s -> %s", result.hand, result.zone, result.action)
+    output = multi_table_agent.to_json(evaluated_tables)
+    logging.info("Evaluation result: %s", output)
+    print(output)
 
 
 if __name__ == "__main__":

@@ -19,23 +19,18 @@ class StrategyEngine:
     def _load_matrix(self) -> tuple[list[str], list[list[str]]]:
         if not self.matrix_path.exists():
             raise FileNotFoundError(f"Strategy matrix file not found: {self.matrix_path}")
-        with self.matrix_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-
-        if not isinstance(payload, dict):
-            raise ValueError("Strategy matrix must be a JSON object")
+        try:
+            with self.matrix_path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Malformed JSON in strategy matrix: {self.matrix_path}") from exc
+        except OSError as exc:
+            raise OSError(f"Unable to open strategy matrix file: {self.matrix_path}") from exc
 
         ranks = payload.get("ranks")
         matrix = payload.get("matrix")
-        if not isinstance(ranks, list) or not ranks or not all(isinstance(r, str) for r in ranks):
-            raise ValueError("ranks must be a non-empty list of strings")
-        if not isinstance(matrix, list) or len(matrix) != len(ranks):
-            raise ValueError("matrix must be a square list matching the ranks length")
-
-        for row in matrix:
-            if not isinstance(row, list) or len(row) != len(ranks):
-                raise ValueError("Each matrix row must match the ranks length")
-
+        if not isinstance(ranks, list) or not isinstance(matrix, list):
+            raise ValueError("Strategy matrix payload missing required fields.")
         return ranks, matrix
 
     def _hand_to_indices(self, rank_left: str, rank_right: str) -> Optional[tuple[int, int]]:
@@ -54,6 +49,10 @@ class StrategyEngine:
                 hand=f"{rank_left}{rank_right}", zone="Unknown", action="Hold"
             )
         row, col = indices
+        if row >= len(self.matrix) or col >= len(self.matrix[row]):
+            return StrategyResult(
+                hand=f"{rank_left}{rank_right}", zone="Unknown", action="Hold"
+            )
         zone = self.matrix[row][col]
         action = "4-Bet Bluff" if zone.lower() == "red" else "Check"
         return StrategyResult(hand=f"{rank_left}{rank_right}", zone=zone, action=action)
