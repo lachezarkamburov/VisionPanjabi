@@ -56,7 +56,12 @@ class AutoCardDetector:
         logger.info("Loaded frame: %sx%s", frame.shape[1], frame.shape[0])
         return frame
 
-    def _find_candidate_cards(self, frame: np.ndarray) -> List[DetectedCard]:
+    def _prepare_debug_dir(self) -> Path:
+        debug_dir = Path("debug")
+        debug_dir.mkdir(exist_ok=True)
+        return debug_dir
+
+    def _detect_cards_edges(self, frame: np.ndarray, debug: bool = False) -> List[DetectedCard]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
         edges = cv2.Canny(blurred, 50, 150)
@@ -77,11 +82,11 @@ class AutoCardDetector:
             area = w * h
             relative_area = area / frame_area
 
-            if not (1.2 <= aspect_ratio <= 1.6):
+            if not (0.8 <= aspect_ratio <= 2.0):
                 continue
-            if not (0.005 <= relative_area <= 0.05):
+            if not (0.001 <= relative_area <= 0.10):
                 continue
-            if w < 40 or h < 60:
+            if w < 30 or h < 40:
                 continue
 
             ideal_aspect = 1.4
@@ -90,27 +95,94 @@ class AutoCardDetector:
             rectangularity = contour_area / area if area > 0 else 0
             confidence = aspect_confidence * 0.6 + rectangularity * 0.4
 
-            if confidence > 0.7:
+            if confidence > 0.5:
                 detected_cards.append(
                     DetectedCard(x=int(x), y=int(y), width=int(w), height=int(h), confidence=confidence)
                 )
 
         detected_cards.sort(key=lambda c: c.confidence, reverse=True)
+
+        if debug:
+            debug_dir = self._prepare_debug_dir()
+            cv2.imwrite(str(debug_dir / "01_original.png"), frame)
+            cv2.imwrite(str(debug_dir / "02_grayscale.png"), gray)
+            cv2.imwrite(str(debug_dir / "03_blurred.png"), blurred)
+            cv2.imwrite(str(debug_dir / "04_edges.png"), edges)
+            cv2.imwrite(str(debug_dir / "05_closed.png"), closed)
+
+            debug_contours = frame.copy()
+            cv2.drawContours(debug_contours, contours, -1, (0, 255, 0), 2)
+            cv2.imwrite(str(debug_dir / "06_all_contours.png"), debug_contours)
+
+            self._save_debug_image(frame, [card.as_dict() for card in detected_cards], debug_dir / "07_detected_cards.png")
+            logger.info("Debug images saved to debug/ folder")
+
         logger.info("Detected %s potential cards", len(detected_cards))
         return detected_cards
 
+    def detect_cards_by_color(self, frame: np.ndarray, debug: bool = False) -> List[DetectedCard]:
+        """
+        Alternative detection using color thresholding.
+        Playing cards are typically white/light colored.
+        """
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        lower_white = np.array([0, 0, 180])
+        upper_white = np.array([180, 30, 255])
+        mask = cv2.inRange(hsv, lower_white, upper_white)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        detected_cards: List[DetectedCard] = []
+
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = h / w if w > 0 else 0
+            area = w * h
+
+            if 0.8 <= aspect_ratio <= 2.5 and area > 1000 and w >= 25 and h >= 35:
+                detected_cards.append(
+                    DetectedCard(x=int(x), y=int(y), width=int(w), height=int(h), confidence=0.8)
+                )
+
+        if debug:
+            debug_dir = self._prepare_debug_dir()
+            cv2.imwrite(str(debug_dir / "color_mask.png"), mask)
+
+        return detected_cards
+
     def detect_cards(self, frame: np.ndarray, debug: bool = False) -> List[Dict[str, int | float]]:
-        """Detect individual cards using edge detection and contour analysis."""
-        cards = [card.as_dict() for card in self._find_candidate_cards(frame)]
-        if debug and cards:
-            self._save_debug_image(frame, cards, Path("debug_cards.png"))
-        return cards
+        """Try edge detection first, fallback to color detection."""
+        edge_cards = self._detect_cards_edges(frame, debug=debug)
+
+        if len(edge_cards) >= 4:
+            logger.info("Edge detection found %s cards", len(edge_cards))
+            detected_cards = edge_cards
+        else:
+            logger.warning("Edge detection insufficient, trying color detection")
+            color_cards = self.detect_cards_by_color(frame, debug=debug)
+
+            if len(color_cards) >= 4:
+                logger.info("Color detection found %s cards", len(color_cards))
+                detected_cards = color_cards
+            else:
+                detected_cards = edge_cards + color_cards
+                logger.warning("Combined detection found %s cards", len(detected_cards))
+
+        if debug:
+            debug_dir = self._prepare_debug_dir()
+            self._save_debug_image(frame, [card.as_dict() for card in detected_cards], debug_dir / "07_detected_cards.png")
+
+        return [card.as_dict() for card in detected_cards]
 
     def detect_card_pairs(
         self, frame: np.ndarray, debug: bool = False
     ) -> List[Tuple[Dict[str, int], Dict[str, int]]]:
         """Detect pairs of cards (hero cards) that are horizontally adjacent."""
-        all_cards = self.detect_cards(frame, debug=False)
+        all_cards = self.detect_cards(frame, debug=debug)
         if len(all_cards) < 2:
             logger.warning("Not enough cards detected to find pairs")
             return []
@@ -147,7 +219,8 @@ class AutoCardDetector:
 
         logger.info("Found %s card pairs", len(pairs))
         if debug and pairs:
-            self._save_debug_pairs(frame, pairs, Path("debug_card_pairs.png"))
+            debug_dir = self._prepare_debug_dir()
+            self._save_debug_pairs(frame, pairs, debug_dir / "debug_card_pairs.png")
         return pairs
 
     def detect_tables_and_cards(
@@ -160,7 +233,7 @@ class AutoCardDetector:
         relative to each table region.
         """
         height, width = frame.shape[:2]
-        pairs = self.detect_card_pairs(frame, debug=False)
+        pairs = self.detect_card_pairs(frame, debug=debug)
 
         if len(pairs) < num_tables:
             logger.warning("Expected %s card pairs but found %s", num_tables, len(pairs))
@@ -209,7 +282,8 @@ class AutoCardDetector:
 
         logger.info("Configured %s tables with card positions", len(tables))
         if debug and tables:
-            self._save_debug_tables(frame, tables, Path("debug_tables.png"))
+            debug_dir = self._prepare_debug_dir()
+            self._save_debug_tables(frame, tables, debug_dir / "debug_tables.png")
         return tables
 
     def _grid_positions(self, num_tables: int, table_width: int, table_height: int) -> List[Tuple[int, int]]:
