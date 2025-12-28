@@ -111,6 +111,7 @@ class MultiTableVision:
         )
 
     def _crop_roi(self, frame: np.ndarray, roi: ROI) -> np.ndarray:
+        roi.validate_within(frame.shape)
         return frame[roi.y : roi.y + roi.height, roi.x : roi.x + roi.width]
 
     def _read_table(self, frame: np.ndarray, table_id: str, origin: Tuple[int, int]) -> TableState:
@@ -151,11 +152,19 @@ class MultiTableVision:
         )
 
     def read_all_tables(self) -> Dict[str, Dict[str, object]]:
-        frame = self.capture_frame()
+        try:
+            frame = self.capture_frame()
+        except Exception as exc:
+            self.logger.error("Unable to capture frame for tables: %s", exc)
+            return {}
         layouts = self._layouts(frame)
         results: Dict[str, Dict[str, object]] = {}
         for index, (x, y, _w, _h) in enumerate(layouts, start=1):
-            table_state = self._read_table(frame, f"table_{index}", (x, y))
+            try:
+                table_state = self._read_table(frame, f"table_{index}", (x, y))
+            except Exception as exc:  # pragma: no cover - defensive logging
+                self.logger.error("Failed to read table %s: %s", index, exc)
+                continue
             results[table_state.table_id] = table_state.as_dict()
         self.logger.info(
             "Detected tables",

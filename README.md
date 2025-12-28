@@ -1,11 +1,11 @@
-# gg-poker-vision-engine
+# poker-vision-engine
 
-A Dockerized poker strategy engine that ingests YouTube frames from GGPoker, uses OpenCV template matching for hero card recognition, and maps the resulting hand into an 8x8 strategy matrix.
+A Dockerized poker strategy engine that ingests YouTube frames from Poker, uses OpenCV template matching for hero card recognition, and maps the resulting hand into an 8x8 strategy matrix.
 
 ## Features
 
 - **Vision agent** powered by OpenCV + Streamlink for frame capture.
-- **Template matching** for card recognition (drop GGPoker card templates into `templates/`).
+- **Template matching** for card recognition (drop Poker card templates into `templates/`).
 - **Strategy engine** driven by an 8x8 matrix stored in `charts/strategy_matrix.json`.
 - **Persistent storage** for strategy charts and local SQLite hand history data in `data/`.
 
@@ -21,7 +21,7 @@ A Dockerized poker strategy engine that ingests YouTube frames from GGPoker, use
 
 ## Setup
 
-1. Add your GGPoker card templates (`.png`) to `templates/`.
+1. Add your Poker card templates (`.png`) to `templates/`.
 2. Update `config.yaml` with your stream URL and ROI coordinates.
 3. (Optional) Define manual table layouts if auto-detection is not reliable.
 2. (Optional) Update ROI coordinates in `src/main.py` to match your stream layout.
