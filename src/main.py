@@ -11,6 +11,7 @@ from multi_table import MultiTableVision, TableROISet
 from strategy import StrategyEngine
 from template_extractor import auto_extract_templates
 from vision_agent import ROI
+from screenshot_extractor import extract_from_screenshots
 
 
 def load_config(config_path: Path) -> dict:
@@ -104,8 +105,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="VisionPanjabi - Poker Vision Engine")
     parser.add_argument(
         "--extract-templates",
-        action="store_true",
-        help="Force re-extraction of templates from the video before analysis.",
+        type=str,
+        metavar="PATH",
+        help="Extract templates from screenshots folder or video file",
     )
     parser.add_argument(
         "--setup-rois",
@@ -214,14 +216,32 @@ def main() -> None:
     config = load_config(config_path)
     logger.info("Configuration loaded successfully")
 
+    templates_dir = Path("templates")
+    extract_path = Path(args.extract_templates) if args.extract_templates else None
+
     if args.setup_rois:
         from setup_rois import setup_rois
 
         setup_rois()
         return
 
+    if extract_path:
+        if extract_path.is_dir():
+            print("📸 Extracting templates from screenshots...")
+            extract_from_screenshots(extract_path, config)
+            return
+        if not extract_path.exists():
+            logger.error("Path not found: %s", extract_path)
+            print(f"\n❌ Path not found: {extract_path}")
+            return
+
     # Check video file exists
     video_path = Path(config["stream"]["url"])
+    force_template_extraction = False
+    if extract_path and extract_path.is_file():
+        video_path = extract_path
+        force_template_extraction = True
+
     if not video_path.exists():
         logger.error("Video file not found: %s", video_path)
         print(f"\n❌ ERROR: Video file not found: {video_path}")
@@ -230,9 +250,7 @@ def main() -> None:
 
     print(f"📹 Video file: {video_path}")
 
-    templates_dir = Path("templates")
-
-    if args.extract_templates:
+    if force_template_extraction:
         logger.info("Forcing template extraction...")
         if templates_dir.exists():
             import shutil
@@ -278,7 +296,7 @@ def main() -> None:
     auto_extract_templates(
         vision,
         templates_dir,
-        force=args.extract_templates,
+        force=force_template_extraction,
         preview=args.preview_templates,
     )
 
