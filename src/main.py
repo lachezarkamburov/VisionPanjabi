@@ -108,6 +108,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Force re-extraction of templates from the video before analysis.",
     )
     parser.add_argument(
+        "--setup-rois",
+        action="store_true",
+        help="Interactive ROI setup tool to manually select card positions.",
+    )
+    parser.add_argument(
         "--interval",
         type=float,
         default=0.0,
@@ -209,6 +214,12 @@ def main() -> None:
     config = load_config(config_path)
     logger.info("Configuration loaded successfully")
 
+    if args.setup_rois:
+        from setup_rois import setup_rois
+
+        setup_rois()
+        return
+
     # Check video file exists
     video_path = Path(config["stream"]["url"])
     if not video_path.exists():
@@ -218,6 +229,16 @@ def main() -> None:
         return
 
     print(f"📹 Video file: {video_path}")
+
+    templates_dir = Path("templates")
+
+    if args.extract_templates:
+        logger.info("Forcing template extraction...")
+        if templates_dir.exists():
+            import shutil
+
+            shutil.rmtree(templates_dir)
+        templates_dir.mkdir()
 
     if args.auto_detect_roi:
         detected_config = _run_auto_roi_detection(
@@ -246,7 +267,7 @@ def main() -> None:
     logger.info("Initializing vision system...")
     vision = MultiTableVision(
         stream_url=str(video_path),
-        templates_dir=Path("templates"),
+        templates_dir=templates_dir,
         base_rois=base_rois,
         auto_detect=config["multi_table"]["auto_detect"],
         max_tables=config["multi_table"]["max_tables"],
@@ -256,7 +277,7 @@ def main() -> None:
     # Auto extract templates if needed
     auto_extract_templates(
         vision,
-        Path("templates"),
+        templates_dir,
         force=args.extract_templates,
         preview=args.preview_templates,
     )
