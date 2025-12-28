@@ -28,7 +28,7 @@ from vision_agent import ROI, VisionAgent
 
 def build_agent() -> VisionAgent:
     return VisionAgent(
-        stream_url="https://twitch.tv/ggpoker",
+        stream_url="https://www.youtube.com/watch?v=VIDEO_ID",
         templates_dir=Path("/app/templates"),
         roi_hero_left=ROI(x=980, y=880, width=80, height=80),
         roi_hero_right=ROI(x=1070, y=880, width=80, height=80),
