@@ -1,11 +1,6 @@
 # gg-poker-vision-engine
 
-A Dockerized poker strategy engine that ingests Twitch frames from GGPoker, uses OpenCV template matching for hero card recognition, and maps the resulting hand into an 8x8 strategy matrix with multi-table support.
-
-## Features
-
-- **Multi-table vision agent** powered by OpenCV + Streamlink for frame capture (up to 6 tables).
-A Dockerized poker strategy engine that ingests Twitch frames from GGPoker, uses OpenCV template matching for hero card recognition, and maps the resulting hand into an 8x8 strategy matrix.
+A Dockerized poker strategy engine that ingests YouTube frames from GGPoker, uses OpenCV template matching for hero card recognition, and maps the resulting hand into an 8x8 strategy matrix.
 
 ## Features
 
@@ -77,3 +72,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python src/main.py
 ```
+
+## Local Browser Console
+
+```bash
+python launch_localhost.py
+```
+
+Open your browser devtools console to see the local log message.
