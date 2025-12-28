@@ -1,36 +1,48 @@
 stream:
-  url: "https://twitch.tv/ggpoker"
+  url: "video/2025-12-28 21-07-39.mp4"  # Local video file path
 
 multi_table:
-  auto_detect: true
-  max_tables: 6
+  auto_detect: false
+  max_tables: 4
   layouts:
     - x: 0
       y: 0
-      width: 640
-      height: 360
+      width: 960
+      height: 540
+    - x: 960
+      y: 0
+      width: 960
+      height: 540
+    - x: 0
+      y: 540
+      width: 960
+      height: 540
+    - x: 960
+      y: 540
+      width: 960
+      height: 540
 
 roi:
   hero_left:
-    x: 980
-    y: 880
-    width: 80
-    height: 80
+    x: 380
+    y: 420
+    width: 70
+    height: 95
   hero_right:
-    x: 1070
-    y: 880
-    width: 80
-    height: 80
+    x: 470
+    y: 420
+    width: 70
+    height: 95
   stack:
-    x: 990
-    y: 960
-    width: 140
-    height: 40
+    x: 370
+    y: 500
+    width: 180
+    height: 30
   dealer_button:
-    x: 1140
-    y: 760
+    x: 420
+    y: 380
     width: 40
     height: 40
 
 strategy:
-  matrix_path: "/app/charts/strategy_matrix.json"
+  matrix_path: "charts/strategy_matrix.json"

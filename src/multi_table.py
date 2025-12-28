@@ -65,6 +65,11 @@ class MultiTableVision:
     def capture_frame(self) -> np.ndarray:
         return self.capture_agent.capture_frame()
 
+    def reload_templates(self) -> None:
+        """Reload templates after extraction."""
+        self.matcher.reload_templates()
+        self.capture_agent.reload_templates()
+
     def _detect_tables(self, frame: np.ndarray) -> List[Tuple[int, int, int, int]]:
         start_time = time.perf_counter()
         grayscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -102,6 +107,20 @@ class MultiTableVision:
             layouts.append((layout["x"], layout["y"], layout["width"], layout["height"]))
         return layouts
 
+    def get_table_layouts(self, frame: Optional[np.ndarray] = None) -> List[Tuple[int, int, int, int]]:
+        """
+        Public accessor for table layouts. Captures a frame if none is provided.
+
+        Args:
+            frame: Optional frame to analyze.
+
+        Returns:
+            List of layout tuples (x, y, width, height).
+        """
+        if frame is None:
+            frame = self.capture_frame()
+        return self._layouts(frame)
+
     def _offset_roi(self, roi: ROI, origin: Tuple[int, int]) -> ROI:
         return ROI(
             x=origin[0] + roi.x,
@@ -109,6 +128,11 @@ class MultiTableVision:
             width=roi.width,
             height=roi.height,
         )
+
+    def get_table_roi(self, layout: Tuple[int, int, int, int], roi: ROI) -> ROI:
+        """Return ROI adjusted to the table layout origin."""
+        x, y, _w, _h = layout
+        return self._offset_roi(roi, (x, y))
 
     def _crop_roi(self, frame: np.ndarray, roi: ROI) -> np.ndarray:
         roi.validate_within(frame.shape)
