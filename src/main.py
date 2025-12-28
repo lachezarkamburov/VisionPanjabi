@@ -1,5 +1,5 @@
-import json
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -19,37 +19,59 @@ def rank_from_template(card_name: Optional[str]) -> Optional[str]:
     if not card_name:
         return None
     return card_name[0].upper()
-import logging
-import os
-from pathlib import Path
-
-from strategy import StrategyEngine
-from vision_agent import ROI, VisionAgent
 
 
-def build_agent() -> VisionAgent:
-    return VisionAgent(
-        stream_url=os.getenv("STREAM_URL", "https://twitch.tv/ggpoker"),
-        templates_dir=Path("/app/templates"),
-        roi_hero_left=ROI(x=980, y=880, width=80, height=80),
-        roi_hero_right=ROI(x=1070, y=880, width=80, height=80),
-        roi_stack=ROI(x=990, y=960, width=140, height=40),
-        roi_button=ROI(x=1140, y=760, width=40, height=40),
+def build_multi_table_agent(config: dict) -> MultiTableVision:
+    roi_config = config["roi"]
+    base_rois = TableROISet(
+        hero_left=ROI(**roi_config["hero_left"]),
+        hero_right=ROI(**roi_config["hero_right"]),
+        stack=ROI(**roi_config["stack"]),
+        dealer_button=ROI(**roi_config["dealer_button"]),
     )
+    multi_table_config = config.get("multi_table", {})
+    return MultiTableVision(
+        stream_url=config["stream"]["url"],
+        templates_dir=Path(config.get("templates_dir", "/app/templates")),
+        base_rois=base_rois,
+        auto_detect=multi_table_config.get("auto_detect", True),
+        max_tables=multi_table_config.get("max_tables", 6),
+        manual_layouts=multi_table_config.get("layouts", []),
+    )
+
+
+def apply_strategy(
+    strategy_engine: StrategyEngine, table_states: dict[str, dict[str, object]]
+) -> dict[str, dict[str, object]]:
+    for table_name, state in table_states.items():
+        cards = state.get("cards", [])
+        rank_left = rank_from_template(cards[0]) if len(cards) > 0 else None
+        rank_right = rank_from_template(cards[1]) if len(cards) > 1 else None
+        result = strategy_engine.lookup(rank_left, rank_right)
+        state["strategy"] = {
+            "hand": result.hand,
+            "zone": result.zone,
+            "action": result.action,
+        }
+        table_states[table_name] = state
+    return table_states
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    logging.info("Project started")
-    agent = build_agent()
-    strategy_engine = StrategyEngine(Path("/app/charts/strategy_matrix.json"))
+    config_path = Path(os.getenv("CONFIG_PATH", "config.yaml"))
+    logging.info("Loading configuration from %s", config_path)
 
-    game_state = agent.read_game_state()
-    result = strategy_engine.lookup(game_state.hero_left, game_state.hero_right)
+    config = load_config(config_path)
+    strategy_engine = StrategyEngine(Path(config["strategy"]["matrix_path"]))
+    multi_table_agent = build_multi_table_agent(config)
 
-    logging.info(
-        "Hand %s in zone %s -> %s", result.hand, result.zone, result.action
-    )
+    table_states = multi_table_agent.read_all_tables()
+    evaluated_tables = apply_strategy(strategy_engine, table_states)
+
+    output = multi_table_agent.to_json(evaluated_tables)
+    logging.info("Evaluation result: %s", output)
+    print(output)
 
 
 if __name__ == "__main__":
