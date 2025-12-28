@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+from card_detector import AutoCardDetector
 from multi_table import MultiTableVision, TableROISet
 from strategy import StrategyEngine
 from template_extractor import auto_extract_templates
@@ -117,7 +118,65 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Save a preview image when extracting templates.",
     )
+    parser.add_argument(
+        "--auto-detect-roi",
+        action="store_true",
+        help="Run automatic ROI detection before analysis to update config.yaml.",
+    )
     return parser
+
+
+def _estimate_additional_rois(hero_left: dict, hero_right: dict) -> tuple[dict, dict]:
+    leftmost_x = min(hero_left["x"], hero_right["x"])
+    rightmost_x = max(hero_left["x"] + hero_left["width"], hero_right["x"] + hero_right["width"])
+    combined_width = (rightmost_x - leftmost_x) + 30
+
+    stack_roi = {
+        "x": leftmost_x,
+        "y": max(hero_left["y"] + hero_left["height"], hero_right["y"] + hero_right["height"]) + 10,
+        "width": combined_width,
+        "height": 30,
+    }
+    dealer_button_roi = {
+        "x": hero_left["x"] + hero_left["width"] // 2,
+        "y": max(hero_left["y"] - 50, 0),
+        "width": 40,
+        "height": 40,
+    }
+    return stack_roi, dealer_button_roi
+
+
+def _run_auto_roi_detection(config_path: Path, config: dict, video_path: Path, max_tables: int) -> dict | None:
+    logger = logging.getLogger(__name__)
+    detector = AutoCardDetector(str(video_path))
+    try:
+        frame = detector.load_frame()
+        tables = detector.detect_tables_and_cards(frame, num_tables=max_tables)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Automatic ROI detection failed: %s", exc)
+        return None
+
+    if not tables:
+        logger.warning("Automatic ROI detection found no tables/cards")
+        return None
+
+    hero_left = tables[0]["hero_left"]
+    hero_right = tables[0]["hero_right"]
+    stack_roi, dealer_button_roi = _estimate_additional_rois(hero_left, hero_right)
+
+    config = dict(config)
+    config.setdefault("roi", {})
+    config["roi"]["hero_left"] = hero_left
+    config["roi"]["hero_right"] = hero_right
+    config["roi"]["stack"] = stack_roi
+    config["roi"]["dealer_button"] = dealer_button_roi
+    config.setdefault("multi_table", {})["layouts"] = [table["layout"] for table in tables]
+
+    with config_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(config, handle, sort_keys=False)
+
+    logger.info("Automatic ROI detection updated config.yaml with %s tables", len(tables))
+    return config
 
 
 def main() -> None:
@@ -152,6 +211,19 @@ def main() -> None:
         return
 
     print(f"📹 Video file: {video_path}")
+
+    if args.auto_detect_roi:
+        detected_config = _run_auto_roi_detection(
+            config_path,
+            config,
+            video_path,
+            config.get("multi_table", {}).get("max_tables", 4),
+        )
+        if detected_config:
+            config = detected_config
+            logger.info("Using auto-detected ROIs from config.yaml")
+        else:
+            logger.warning("Proceeding with existing ROIs due to auto-detection failure")
 
     # Build ROI set from config
     roi_config = config["roi"]
