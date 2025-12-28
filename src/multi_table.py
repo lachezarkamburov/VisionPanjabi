@@ -1,10 +1,12 @@
 import json
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2
+import numpy as np
 from vision_agent import ROI, TemplateMatcher, VisionAgent
 
 
@@ -64,6 +66,7 @@ class MultiTableVision:
         return self.capture_agent.capture_frame()
 
     def _detect_tables(self, frame: np.ndarray) -> List[Tuple[int, int, int, int]]:
+        start_time = time.perf_counter()
         grayscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(grayscale, 50, 150)
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -74,6 +77,15 @@ class MultiTableVision:
                 continue
             candidates.append((x, y, w, h))
         candidates.sort(key=lambda item: item[2] * item[3], reverse=True)
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        self.logger.info(
+            "Detected table candidates",
+            extra={
+                "event": "table_detection",
+                "candidate_count": len(candidates),
+                "duration_ms": round(duration_ms, 2),
+            },
+        )
         return candidates[: self.max_tables]
 
     def _layouts(self, frame: np.ndarray) -> List[Tuple[int, int, int, int]]:
@@ -81,6 +93,10 @@ class MultiTableVision:
             detected = self._detect_tables(frame)
             if detected:
                 return detected
+            self.logger.warning(
+                "Auto-detection returned no tables; falling back to manual layouts",
+                extra={"event": "table_detection_fallback"},
+            )
         layouts: List[Tuple[int, int, int, int]] = []
         for layout in self.manual_layouts:
             layouts.append((layout["x"], layout["y"], layout["width"], layout["height"]))
@@ -98,6 +114,11 @@ class MultiTableVision:
         return frame[roi.y : roi.y + roi.height, roi.x : roi.x + roi.width]
 
     def _read_table(self, frame: np.ndarray, table_id: str, origin: Tuple[int, int]) -> TableState:
+        self.logger.debug(
+            "Reading table",
+            extra={"event": "table_read_start", "table_id": table_id, "origin": origin},
+        )
+        start_time = time.perf_counter()
         hero_left_roi = self._offset_roi(self.base_rois.hero_left, origin)
         hero_right_roi = self._offset_roi(self.base_rois.hero_right, origin)
         stack_roi = self._offset_roi(self.base_rois.stack, origin)
@@ -109,6 +130,18 @@ class MultiTableVision:
         stack_crop = self._crop_roi(frame, stack_roi)
         stack_size = f"{stack_crop.shape[1]}px"
 
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        self.logger.info(
+            "Finished reading table",
+            extra={
+                "event": "table_read_complete",
+                "table_id": table_id,
+                "duration_ms": round(duration_ms, 2),
+                "hero_left": hero_left,
+                "hero_right": hero_right,
+                "dealer_button": dealer_button_match is not None,
+            },
+        )
         return TableState(
             table_id=table_id,
             hero_left=hero_left,
@@ -124,7 +157,10 @@ class MultiTableVision:
         for index, (x, y, _w, _h) in enumerate(layouts, start=1):
             table_state = self._read_table(frame, f"table_{index}", (x, y))
             results[table_state.table_id] = table_state.as_dict()
-        self.logger.info("Detected %s tables", len(results))
+        self.logger.info(
+            "Detected tables",
+            extra={"event": "tables_detected", "table_count": len(results)},
+        )
         return results
 
     def to_json(self, data: Dict[str, Dict[str, object]]) -> str:
