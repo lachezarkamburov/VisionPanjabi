@@ -79,16 +79,14 @@ class VisionAgent:
     ) -> None:
         self.stream_url = stream_url
         self.templates_dir = templates_dir
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.roi_hero_left = roi_hero_left
         self.roi_hero_right = roi_hero_right
         self.roi_stack = roi_stack
         self.roi_button = roi_button
-        self.matcher = TemplateMatcher(templates_dir, match_threshold)
-        self.logger = logging.getLogger(self.__class__.__name__)
-
         self.match_threshold = match_threshold
+        self.matcher = TemplateMatcher(templates_dir, match_threshold)
         self.templates = self._load_templates()
-        self.logger = logging.getLogger(self.__class__.__name__)
 
     def _load_templates(self) -> Dict[str, np.ndarray]:
         templates: Dict[str, np.ndarray] = {}
