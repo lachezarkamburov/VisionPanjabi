@@ -12,5 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src ./src
 COPY templates ./templates
 COPY charts ./charts
+COPY config.yaml ./config.yaml
 
 CMD ["python", "/app/src/main.py"]

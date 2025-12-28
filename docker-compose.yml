@@ -7,4 +7,5 @@ services:
     volumes:
       - ./charts:/app/charts
       - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
     restart: unless-stopped
