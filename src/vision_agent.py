@@ -3,6 +3,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 import cv2
 import numpy as np
@@ -16,6 +17,19 @@ class ROI:
     width: int
     height: int
 
+    def validate_within(self, frame_shape: tuple[int, ...]) -> None:
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("ROI width and height must be positive")
+
+        frame_height, frame_width = frame_shape[:2]
+        if self.x < 0 or self.y < 0:
+            raise ValueError("ROI coordinates must be non-negative")
+
+        if self.x + self.width > frame_width or self.y + self.height > frame_height:
+            raise ValueError(
+                "ROI must fit entirely within the frame bounds"
+            )
+
 
 @dataclass
 class GameState:
@@ -27,6 +41,11 @@ class GameState:
 
 class TemplateMatcher:
     def __init__(self, templates_dir: Path, match_threshold: float = 0.92) -> None:
+        if not templates_dir.exists():
+            raise FileNotFoundError(f"Templates directory not found: {templates_dir}")
+        if not templates_dir.is_dir():
+            raise NotADirectoryError(f"Templates path is not a directory: {templates_dir}")
+
         self.templates_dir = templates_dir
         self.match_threshold = match_threshold
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -77,7 +96,7 @@ class VisionAgent:
         roi_button: ROI,
         match_threshold: float = 0.92,
     ) -> None:
-        self.stream_url = stream_url
+        self.stream_url = self._validate_stream_url(stream_url)
         self.templates_dir = templates_dir
         self.logger = logging.getLogger(self.__class__.__name__)
         self.roi_hero_left = roi_hero_left
@@ -141,6 +160,7 @@ class VisionAgent:
             raise
 
     def _crop_roi(self, frame: np.ndarray, roi: ROI) -> np.ndarray:
+        roi.validate_within(frame.shape)
         return frame[roi.y : roi.y + roi.height, roi.x : roi.x + roi.width]
 
     def _match_template(self, roi: np.ndarray) -> Optional[str]:
@@ -175,3 +195,14 @@ class VisionAgent:
         )
         self.logger.info("Captured game state: %s", game_state)
         return game_state
+
+    @staticmethod
+    def _validate_stream_url(stream_url: str) -> str:
+        if not stream_url or not stream_url.strip():
+            raise ValueError("Stream URL must be provided")
+
+        parsed = urlparse(stream_url)
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError("Stream URL must include a scheme and hostname")
+
+        return stream_url

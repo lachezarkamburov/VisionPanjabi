@@ -96,6 +96,7 @@ class MultiTableVision:
         )
 
     def _crop_roi(self, frame: np.ndarray, roi: ROI) -> np.ndarray:
+        roi.validate_within(frame.shape)
         return frame[roi.y : roi.y + roi.height, roi.x : roi.x + roi.width]
 
     def _read_table(self, frame: np.ndarray, table_id: str, origin: Tuple[int, int]) -> TableState:
