@@ -1,0 +1,36 @@
+stream:
+  url: "https://twitch.tv/ggpoker"
+
+multi_table:
+  auto_detect: true
+  max_tables: 6
+  layouts:
+    - x: 0
+      y: 0
+      width: 640
+      height: 360
+
+roi:
+  hero_left:
+    x: 980
+    y: 880
+    width: 80
+    height: 80
+  hero_right:
+    x: 1070
+    y: 880
+    width: 80
+    height: 80
+  stack:
+    x: 990
+    y: 960
+    width: 140
+    height: 40
+  dealer_button:
+    x: 1140
+    y: 760
+    width: 40
+    height: 40
+
+strategy:
+  matrix_path: "/app/charts/strategy_matrix.json"

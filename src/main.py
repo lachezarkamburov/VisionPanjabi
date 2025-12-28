@@ -1,3 +1,24 @@
+import json
+import logging
+from pathlib import Path
+from typing import Optional
+
+import yaml
+
+from multi_table import MultiTableVision, TableROISet
+from strategy import StrategyEngine
+from vision_agent import ROI
+
+
+def load_config(config_path: Path) -> dict:
+    with config_path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def rank_from_template(card_name: Optional[str]) -> Optional[str]:
+    if not card_name:
+        return None
+    return card_name[0].upper()
 import logging
 import os
 from pathlib import Path
