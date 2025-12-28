@@ -4,9 +4,11 @@ from typing import List
 
 import cv2
 import numpy as np
+import yaml
 
+from card_detector import AutoCardDetector
 from card_recognizer import CardRecognizer
-from multi_table import MultiTableVision
+from multi_table import MultiTableVision, TableROISet
 from vision_agent import ROI
 
 
@@ -33,6 +35,69 @@ def _build_preview(templates: List[np.ndarray]) -> np.ndarray:
     return np.concatenate(padded, axis=1)
 
 
+def _roi_to_dict(roi: ROI) -> dict:
+    return {"x": roi.x, "y": roi.y, "width": roi.width, "height": roi.height}
+
+
+def _estimate_additional_rois(hero_left: ROI, hero_right: ROI) -> tuple[ROI, ROI]:
+    leftmost_x = min(hero_left.x, hero_right.x)
+    rightmost_x = max(hero_left.x + hero_left.width, hero_right.x + hero_right.width)
+    combined_width = (rightmost_x - leftmost_x) + 30
+
+    stack_roi = ROI(
+        x=leftmost_x,
+        y=max(hero_left.y + hero_left.height, hero_right.y + hero_right.height) + 10,
+        width=combined_width,
+        height=30,
+    )
+    dealer_button_roi = ROI(
+        x=hero_left.x + hero_left.width // 2,
+        y=max(hero_left.y - 50, 0),
+        width=40,
+        height=40,
+    )
+    return stack_roi, dealer_button_roi
+
+
+def _apply_detected_layouts(
+    vision: MultiTableVision, tables: List[dict], config_path: Path
+) -> None:
+    hero_left_roi = ROI(**tables[0]["hero_left"])
+    hero_right_roi = ROI(**tables[0]["hero_right"])
+    stack_roi, dealer_button_roi = _estimate_additional_rois(hero_left_roi, hero_right_roi)
+
+    vision.base_rois = TableROISet(
+        hero_left=hero_left_roi,
+        hero_right=hero_right_roi,
+        stack=stack_roi,
+        dealer_button=dealer_button_roi,
+    )
+    vision.manual_layouts = [table["layout"] for table in tables]
+
+    config: dict = {}
+    if config_path.exists():
+        with config_path.open("r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+
+    config.setdefault("roi", {})
+    config["roi"]["hero_left"] = _roi_to_dict(hero_left_roi)
+    config["roi"]["hero_right"] = _roi_to_dict(hero_right_roi)
+    config["roi"]["stack"] = _roi_to_dict(stack_roi)
+    config["roi"]["dealer_button"] = _roi_to_dict(dealer_button_roi)
+    config.setdefault("multi_table", {})["layouts"] = vision.manual_layouts
+
+    with config_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(config, handle, sort_keys=False)
+
+    logger.info(
+        "Auto-detected ROIs updated",
+        extra={
+            "event": "roi_autodetect_update",
+            "layouts": len(vision.manual_layouts),
+        },
+    )
+
+
 def auto_extract_templates(
     vision: MultiTableVision,
     templates_dir: Path,
@@ -52,12 +117,29 @@ def auto_extract_templates(
         Number of templates written to disk.
     """
     existing_templates = list(templates_dir.glob("*.png"))
-    if existing_templates and not force:
+    need_templates = force or not existing_templates
+
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    if not need_templates:
         logger.info("Found existing templates, skipping extraction")
         return 0
 
-    templates_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Templates folder empty - extracting from video...")
+
+    detector = AutoCardDetector(vision.stream_url)
+    config_path = Path("config.yaml")
+    try:
+        frame_for_detection = detector.load_frame()
+        detected_tables = detector.detect_tables_and_cards(
+            frame_for_detection, num_tables=vision.max_tables
+        )
+        if detected_tables:
+            logger.info("Auto-detected %s tables with card positions", len(detected_tables))
+            _apply_detected_layouts(vision, detected_tables, config_path)
+        else:
+            logger.warning("Auto-detection failed, using existing ROIs")
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Automatic ROI detection failed: %s", exc)
 
     recognizer = CardRecognizer()
     frame = vision.capture_frame()
