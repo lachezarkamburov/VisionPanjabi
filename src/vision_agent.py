@@ -71,6 +71,7 @@ class TemplateMatcher:
         if len(self.templates) == 0:
             return None
 
+        start_time = time.perf_counter()
         best_name = None
         best_score = 0.0
         for name, template in self.templates.items():
@@ -95,6 +96,7 @@ class TemplateMatcher:
             self.logger.debug("Matched %s with score %.2f", best_name, best_score)
             return best_name
 
+        duration_ms = (time.perf_counter() - start_time) * 1000
         self.logger.warning(
             "No template matched above threshold",
             extra={
