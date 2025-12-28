@@ -41,6 +41,7 @@ class TemplateMatcher:
         self.match_threshold = match_threshold
         self.logger = logging.getLogger(self.__class__.__name__)
         self.templates = self._load_templates()
+        self.logger = logging.getLogger(self.__class__.__name__)
 
     def reload_templates(self) -> None:
         """Reload templates from disk."""
@@ -74,6 +75,15 @@ class TemplateMatcher:
         best_score = 0.0
         for name, template in self.templates.items():
             if roi.shape[0] < template.shape[0] or roi.shape[1] < template.shape[1]:
+                self.logger.debug(
+                    "Skipping template due to ROI size",
+                    extra={
+                        "event": "template_skipped",
+                        "template": name,
+                        "roi_shape": roi.shape,
+                        "template_shape": template.shape,
+                    },
+                )
                 continue
             result = cv2.matchTemplate(roi, template, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, _ = cv2.minMaxLoc(result)
@@ -84,6 +94,15 @@ class TemplateMatcher:
         if best_score >= self.match_threshold:
             self.logger.debug("Matched %s with score %.2f", best_name, best_score)
             return best_name
+
+        self.logger.warning(
+            "No template matched above threshold",
+            extra={
+                "event": "template_match_miss",
+                "best_score": round(best_score, 3),
+                "duration_ms": round(duration_ms, 2),
+            },
+        )
         return None
 
 
