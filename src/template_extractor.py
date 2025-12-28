@@ -7,7 +7,6 @@ import numpy as np
 import yaml
 
 from card_detector import AutoCardDetector
-from card_recognizer import CardRecognizer
 from multi_table import MultiTableVision, TableROISet
 from vision_agent import ROI
 
@@ -141,45 +140,84 @@ def auto_extract_templates(
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Automatic ROI detection failed: %s", exc)
 
-    recognizer = CardRecognizer()
     frame = vision.capture_frame()
-    layouts = vision.get_table_layouts(frame)
+
+    config: dict = {}
+    config_path = Path("config.yaml")
+    if config_path.exists():
+        with config_path.open("r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+
+    multi_table_config = config.get("multi_table", {})
+    layouts = multi_table_config.get("layouts", [])
+
     if not layouts:
-        logger.warning("No table layouts detected; cannot extract templates")
+        height, width = frame.shape[:2]
+        layouts = [{"x": 0, "y": 0, "width": width, "height": height}]
+        logger.info("No multi-table layouts configured; using full-frame layout")
+
+    base_roi = config.get("roi", {})
+    if not base_roi:
+        logger.error("No ROI configuration found in config.yaml")
+        return 0
+
+    left_roi_config = base_roi.get("hero_left")
+    right_roi_config = base_roi.get("hero_right")
+
+    if not left_roi_config or not right_roi_config:
+        logger.error("Missing hero card ROI configuration; cannot extract templates")
         return 0
 
     template_images: List[np.ndarray] = []
     template_count = 0
-    unrecognized_count = 0
-    recognized_count = 0
 
     for table_index, layout in enumerate(layouts, start=1):
-        left_roi = vision.get_table_roi(layout, vision.base_rois.hero_left)
-        right_roi = vision.get_table_roi(layout, vision.base_rois.hero_right)
+        table_x = layout["x"]
+        table_y = layout["y"]
+        table_w = layout["width"]
+        table_h = layout["height"]
+        logger.info(
+            "Processing table %s at (%s, %s) size %sx%s",
+            table_index,
+            table_x,
+            table_y,
+            table_w,
+            table_h,
+        )
 
-        left_card = _crop(frame, left_roi)
-        right_card = _crop(frame, right_roi)
+        left_roi = ROI(
+            x=table_x + left_roi_config["x"],
+            y=table_y + left_roi_config["y"],
+            width=left_roi_config["width"],
+            height=left_roi_config["height"],
+        )
+        right_roi = ROI(
+            x=table_x + right_roi_config["x"],
+            y=table_y + right_roi_config["y"],
+            width=right_roi_config["width"],
+            height=right_roi_config["height"],
+        )
 
-        left_name = recognizer.recognize_card(left_card)
-        right_name = recognizer.recognize_card(right_card)
+        try:
+            left_roi.validate_within(frame.shape)
+            right_roi.validate_within(frame.shape)
+        except ValueError as exc:
+            logger.warning("Table %s: ROI out of bounds, skipping - %s", table_index, exc)
+            continue
 
-        if left_name and len(left_name) == 2 and left_name[0] in "AKQJT98765432" and left_name[1] in "hdcs":
-            left_filename = f"{left_name}.png"
-            recognized_count += 1
-            logger.info("✅ Recognized: %s (table %s left)", left_name, table_index)
-        else:
-            left_filename = f"card_table_{table_index}_left.png"
-            unrecognized_count += 1
-            logger.warning("❌ Could not recognize card from table %s left, using generic name", table_index)
+        try:
+            left_card = _crop(frame, left_roi)
+            right_card = _crop(frame, right_roi)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Table %s: Extraction failed - %s", table_index, exc)
+            continue
 
-        if right_name and len(right_name) == 2 and right_name[0] in "AKQJT98765432" and right_name[1] in "hdcs":
-            right_filename = f"{right_name}.png"
-            recognized_count += 1
-            logger.info("✅ Recognized: %s (table %s right)", right_name, table_index)
-        else:
-            right_filename = f"card_table_{table_index}_right.png"
-            unrecognized_count += 1
-            logger.warning("❌ Could not recognize card from table %s right, using generic name", table_index)
+        if left_card.mean() < 10 or right_card.mean() < 10:
+            logger.warning("Table %s: Cards appear blank, skipping", table_index)
+            continue
+
+        left_filename = f"table{table_index}_hero_left.png"
+        right_filename = f"table{table_index}_hero_right.png"
 
         left_path = templates_dir / left_filename
         right_path = templates_dir / right_filename
@@ -200,15 +238,5 @@ def auto_extract_templates(
         logger.info("Template preview saved to %s", preview_path)
 
     vision.reload_templates()
-    if unrecognized_count:
-        logger.warning(
-            "Failed to recognize %s cards. Please manually rename files in %s using format: Ah.png, Kc.png, etc.",
-            unrecognized_count,
-            templates_dir,
-        )
-    logger.info(
-        "Extracted %s card templates from video (%s recognized)",
-        template_count,
-        recognized_count,
-    )
+    logger.info("Extracted %s card templates from video", template_count)
     return template_count
