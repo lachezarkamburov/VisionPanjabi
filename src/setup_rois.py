@@ -76,36 +76,64 @@ def setup_rois() -> None:
 
     print(f"\n✅ Card detected at: x={x}, y={y}, width={width}, height={height}")
 
+    # Determine which table the click is in (2x2 grid)
+    frame_h, frame_w = frame.shape[:2]
+    table_w = frame_w // 2
+    table_h = frame_h // 2
+
+    table_col = 0 if x < table_w else 1
+    table_row = 0 if y < table_h else 1
+
+    table_x = table_col * table_w
+    table_y = table_row * table_h
+
+    rel_x = x - table_x
+    rel_y = y - table_y
+
+    print(
+        "\n✅ Detected click in table: "
+        f"row {table_row}, col {table_col} (origin x={table_x}, y={table_y})"
+    )
+    print(f"   Relative position: x={rel_x}, y={rel_y}")
+
     # Assume cards are side-by-side with small gap
     gap = 15  # Typical gap between hero cards
 
-    # Update config
+    # Update config with RELATIVE coordinates
     config["roi"] = {
         "hero_left": {
-            "x": x,
-            "y": y,
+            "x": rel_x,
+            "y": rel_y,
             "width": width,
             "height": height,
         },
         "hero_right": {
-            "x": x + width + gap,
-            "y": y,
+            "x": rel_x + width + gap,
+            "y": rel_y,
             "width": width,
             "height": height,
         },
         "stack": {
-            "x": x,
-            "y": y + height + 10,
+            "x": rel_x,
+            "y": rel_y + height + 10,
             "width": width * 2 + gap,
             "height": 30,
         },
         "dealer_button": {
-            "x": x + width // 2,
-            "y": y - 50,
+            "x": rel_x + width // 2,
+            "y": rel_y - 50,
             "width": 40,
             "height": 40,
         },
     }
+
+    # Update multi-table layouts to a 2x2 grid based on frame size
+    config.setdefault("multi_table", {})["layouts"] = [
+        {"x": 0, "y": 0, "width": table_w, "height": table_h},
+        {"x": table_w, "y": 0, "width": table_w, "height": table_h},
+        {"x": 0, "y": table_h, "width": table_w, "height": table_h},
+        {"x": table_w, "y": table_h, "width": table_w, "height": table_h},
+    ]
 
     # Save config
     with open(config_path, "w", encoding="utf-8") as file:
