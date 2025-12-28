@@ -151,6 +151,7 @@ def auto_extract_templates(
     template_images: List[np.ndarray] = []
     template_count = 0
     unrecognized_count = 0
+    recognized_count = 0
 
     for table_index, layout in enumerate(layouts, start=1):
         left_roi = vision.get_table_roi(layout, vision.base_rois.hero_left)
@@ -162,15 +163,23 @@ def auto_extract_templates(
         left_name = recognizer.recognize_card(left_card)
         right_name = recognizer.recognize_card(right_card)
 
-        left_filename = f"{left_name}.png" if left_name else f"card_table_{table_index}_left.png"
-        right_filename = f"{right_name}.png" if right_name else f"card_table_{table_index}_right.png"
+        if left_name and len(left_name) == 2 and left_name[0] in "AKQJT98765432" and left_name[1] in "hdcs":
+            left_filename = f"{left_name}.png"
+            recognized_count += 1
+            logger.info("✅ Recognized: %s (table %s left)", left_name, table_index)
+        else:
+            left_filename = f"card_table_{table_index}_left.png"
+            unrecognized_count += 1
+            logger.warning("❌ Could not recognize card from table %s left, using generic name", table_index)
 
-        if not left_name:
+        if right_name and len(right_name) == 2 and right_name[0] in "AKQJT98765432" and right_name[1] in "hdcs":
+            right_filename = f"{right_name}.png"
+            recognized_count += 1
+            logger.info("✅ Recognized: %s (table %s right)", right_name, table_index)
+        else:
+            right_filename = f"card_table_{table_index}_right.png"
             unrecognized_count += 1
-            logger.warning("Could not recognize card from table %s left position", table_index)
-        if not right_name:
-            unrecognized_count += 1
-            logger.warning("Could not recognize card from table %s right position", table_index)
+            logger.warning("❌ Could not recognize card from table %s right, using generic name", table_index)
 
         left_path = templates_dir / left_filename
         right_path = templates_dir / right_filename
@@ -197,5 +206,9 @@ def auto_extract_templates(
             unrecognized_count,
             templates_dir,
         )
-    logger.info("Extracted %s card templates from video", template_count)
+    logger.info(
+        "Extracted %s card templates from video (%s recognized)",
+        template_count,
+        recognized_count,
+    )
     return template_count

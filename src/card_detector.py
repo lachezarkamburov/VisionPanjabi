@@ -155,28 +155,113 @@ class AutoCardDetector:
         return detected_cards
 
     def detect_cards(self, frame: np.ndarray, debug: bool = False) -> List[Dict[str, int | float]]:
-        """Try edge detection first, fallback to color detection."""
-        edge_cards = self._detect_cards_edges(frame, debug=debug)
+        """Detect card positions using edge detection with position filtering."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
 
-        if len(edge_cards) >= 4:
-            logger.info("Edge detection found %s cards", len(edge_cards))
-            detected_cards = edge_cards
-        else:
-            logger.warning("Edge detection insufficient, trying color detection")
-            color_cards = self.detect_cards_by_color(frame, debug=debug)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
-            if len(color_cards) >= 4:
-                logger.info("Color detection found %s cards", len(color_cards))
-                detected_cards = color_cards
-            else:
-                detected_cards = edge_cards + color_cards
-                logger.warning("Combined detection found %s cards", len(detected_cards))
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        detected_cards: List[Dict[str, int | float]] = []
+        h, w = frame.shape[:2]
+
+        # Define card search region (playing cards are in center-bottom area)
+        card_region_y_min = int(h * 0.35)  # Skip top 35% (headers, menus)
+        card_region_y_max = int(h * 0.85)  # Skip bottom 15% (footer UI)
+        card_region_x_min = int(w * 0.10)  # Skip left/right edges
+        card_region_x_max = int(w * 0.90)
+
+        for contour in contours:
+            x, y, w_rect, h_rect = cv2.boundingRect(contour)
+            if w_rect == 0 or h_rect == 0:
+                continue
+
+            # Filter 1: Exclude non-rectangular shapes (player avatars are circular)
+            perimeter = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, 0.04 * perimeter, True)
+            if len(approx) < 4 or len(approx) > 6:
+                continue
+
+            # Calculate properties
+            aspect_ratio = h_rect / w_rect if w_rect > 0 else 0
+            area = w_rect * h_rect
+
+            # Filter 2: Absolute size filtering (cards are consistent pixel size)
+            # Playing cards in this video are roughly 40-120px wide, 60-180px tall
+            if not (40 <= w_rect <= 120 and 60 <= h_rect <= 180 and area > 2000):
+                continue
+
+            # Filter 3: Aspect ratio (cards are vertical rectangles, ~1.2-1.8 ratio)
+            if not (0.9 <= aspect_ratio <= 2.2):
+                continue
+
+            # Filter 4: Position filtering (cards in expected region)
+            card_center_y = y + h_rect // 2
+            card_center_x = x + w_rect // 2
+
+            in_card_region = (card_region_y_min <= card_center_y <= card_region_y_max and
+                             card_region_x_min <= card_center_x <= card_region_x_max)
+
+            # Calculate confidence
+            ideal_aspect = 1.4
+            aspect_confidence = 1.0 - min(abs(aspect_ratio - ideal_aspect) / ideal_aspect, 1.0)
+
+            contour_area = cv2.contourArea(contour)
+            rectangularity = contour_area / area if area > 0 else 0
+
+            confidence = (aspect_confidence * 0.6 + rectangularity * 0.4)
+
+            # Boost confidence if in expected region
+            if in_card_region:
+                confidence *= 1.5
+
+            # Only keep high-confidence detections in card region
+            if confidence > 0.5 and in_card_region:
+                detected_cards.append({
+                    "x": int(x),
+                    "y": int(y),
+                    "width": int(w_rect),
+                    "height": int(h_rect),
+                    "confidence": float(min(confidence, 1.0)),  # Cap at 1.0
+                })
+
+        # Filter 5: Boost confidence for horizontally paired cards
+        for i, card1 in enumerate(detected_cards):
+            for j, card2 in enumerate(detected_cards):
+                if i >= j:
+                    continue
+
+                # Check if cards are horizontally adjacent (hero cards)
+                y_diff = abs(card1["y"] - card2["y"])
+
+                if card1["x"] < card2["x"]:
+                    x_gap = card2["x"] - (card1["x"] + card1["width"])
+                else:
+                    x_gap = card1["x"] - (card2["x"] + card2["width"])
+
+                # Cards are paired if: similar Y position, small horizontal gap
+                if y_diff < 25 and 3 <= x_gap <= 60:
+                    card1["confidence"] = float(min(card1["confidence"] * 1.4, 1.0))
+                    card2["confidence"] = float(min(card2["confidence"] * 1.4, 1.0))
+
+        # Sort by confidence
+        detected_cards.sort(key=lambda c: c["confidence"], reverse=True)
+
+        logger.info("Detected %s potential cards", len(detected_cards))
 
         if debug:
-            debug_dir = self._prepare_debug_dir()
-            self._save_debug_image(frame, [card.as_dict() for card in detected_cards], debug_dir / "07_detected_cards.png")
+            self._save_debug_images(
+                frame,
+                detected_cards,
+                card_region_y_min,
+                card_region_y_max,
+                card_region_x_min,
+                card_region_x_max,
+            )
 
-        return [card.as_dict() for card in detected_cards]
+        return detected_cards
 
     def detect_card_pairs(
         self, frame: np.ndarray, debug: bool = False
@@ -321,6 +406,56 @@ class AutoCardDetector:
             )
         cv2.imwrite(str(output_path), annotated)
         logger.info("Saved debug image to %s", output_path)
+
+    def _save_debug_images(
+        self,
+        frame: np.ndarray,
+        detected_cards: List[Dict[str, int | float]],
+        y_min: int,
+        y_max: int,
+        x_min: int,
+        x_max: int,
+    ) -> None:
+        """Save debug visualization with search region and filtered cards."""
+        debug_dir = self._prepare_debug_dir()
+
+        # Draw search region in blue
+        debug_region = frame.copy()
+        cv2.rectangle(debug_region, (x_min, y_min), (x_max, y_max), (255, 0, 0), 3)
+        cv2.putText(
+            debug_region,
+            "Card Search Region",
+            (x_min + 10, y_min + 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 0, 0),
+            2,
+        )
+        cv2.imwrite(str(debug_dir / "08_search_region.png"), debug_region)
+
+        # Draw detected cards
+        debug_detected = frame.copy()
+        for card in detected_cards:
+            color = (0, 255, 0) if card["confidence"] > 0.7 else (0, 165, 255)
+            cv2.rectangle(
+                debug_detected,
+                (int(card["x"]), int(card["y"])),
+                (int(card["x"] + card["width"]), int(card["y"] + card["height"])),
+                color,
+                3,
+            )
+            cv2.putText(
+                debug_detected,
+                f"{card['confidence']:.2f}",
+                (int(card["x"]), int(card["y"] - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color,
+                2,
+            )
+
+        cv2.imwrite(str(debug_dir / "09_filtered_cards.png"), debug_detected)
+        logger.info("Debug images saved to %s/", debug_dir)
 
     def _save_debug_pairs(
         self, frame: np.ndarray, pairs: List[Tuple[Dict[str, int], Dict[str, int]]], output_path: Path

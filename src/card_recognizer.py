@@ -87,18 +87,50 @@ class CardRecognizer:
 
     def _detect_rank_fallback(self, thresh_corner: np.ndarray) -> Optional[str]:
         """
-        Fallback rank detection using simple heuristics.
-
-        Can be improved with pre-defined rank templates.
+        Improved fallback rank detection using pattern analysis.
+        Analyzes contour count and white pixel density.
         """
+        if thresh_corner is None or thresh_corner.size == 0:
+            return None
+
+        # Find contours in rank region
         contours, _ = cv2.findContours(
             thresh_corner, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
 
-        if not contours:
-            return None
+        # Calculate white pixel ratio
+        white_pixels = cv2.countNonZero(thresh_corner)
+        total_pixels = thresh_corner.shape[0] * thresh_corner.shape[1]
+        white_ratio = white_pixels / total_pixels if total_pixels > 0 else 0
 
-        return None
+        num_contours = len(contours)
+
+        # Heuristic mapping based on complexity
+        # A = simple (1 contour, low density)
+        # K, Q, J = complex (1-2 contours, higher density)
+        # T (10) = two separate shapes (2+ contours)
+        # 2-9 = varying patterns
+
+        if num_contours == 0:
+            return None
+        elif num_contours >= 2:
+            # Likely "10" (two digits) or multi-part letter
+            if white_ratio > 0.15:
+                return "T"  # Ten has two characters
+            return "K"  # King is complex
+        elif num_contours == 1:
+            # Single character - use density to differentiate
+            if white_ratio < 0.07:
+                return "A"  # Ace is sparse
+            elif white_ratio > 0.14:
+                return "Q"  # Queen is dense
+            elif white_ratio > 0.10:
+                return "K"  # King medium-high
+            else:
+                return "J"  # Jack medium
+
+        # Default fallback
+        return "A"
 
     def _detect_suit(self, card_image: np.ndarray) -> Optional[str]:
         """
@@ -110,19 +142,37 @@ class CardRecognizer:
         3. Analyze shape to distinguish among suits.
         """
         h, w = card_image.shape[:2]
-        suit_region = card_image[int(h * 0.15) : int(h * 0.35), 0 : int(w * 0.3)]
+        suit_region = card_image[int(h * 0.15) : int(h * 0.40), 0 : int(w * 0.35)]
 
+        if suit_region.size == 0:
+            return "h"  # Default fallback
+
+        # Color detection
         is_red = self._is_red_suit(suit_region)
-        shape_type = self._analyze_suit_shape(suit_region)
 
+        # Shape analysis
+        gray = cv2.cvtColor(suit_region, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if not contours:
+            return "h" if is_red else "s"
+
+        # Analyze largest contour (suit symbol)
+        largest = max(contours, key=cv2.contourArea)
+        x, y, w_s, h_s = cv2.boundingRect(largest)
+        aspect = h_s / w_s if w_s > 0 else 1.0
+
+        # Use color + aspect ratio to determine suit
         if is_red:
-            if shape_type == "rounded":
-                return "h"  # hearts
-            return "d"  # diamonds
-
-        if shape_type == "pointed":
-            return "s"  # spades
-        return "c"  # clubs
+            # Hearts vs Diamonds
+            # Diamonds are taller/narrower (aspect > 1.4)
+            return "d" if aspect > 1.4 else "h"
+        else:
+            # Clubs vs Spades
+            # Spades are slightly taller (aspect > 1.35)
+            return "s" if aspect > 1.35 else "c"
 
     def _is_red_suit(self, suit_region: np.ndarray) -> bool:
         """Check if suit symbol is red or black based on color analysis."""
