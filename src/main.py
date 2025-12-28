@@ -1,51 +1,86 @@
+import json
 import logging
-import os
 from pathlib import Path
-from typing import Dict
-from urllib.parse import urlparse
 
 import yaml
 
+from multi_table import MultiTableVision, TableROISet
 from strategy import StrategyEngine
-from vision_agent import ROI, VisionAgent
-
-CONFIG_ENV_VAR = "CONFIG_PATH"
-DEFAULT_CONFIG_PATH = "config.yaml"
-DEFAULT_TEMPLATES_DIR = "/app/templates"
-DEFAULT_MATRIX_PATH = "/app/charts/strategy_matrix.json"
+from vision_agent import ROI
 
 
-def load_config(config_path: Path) -> Dict[str, object]:
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-
+def load_config(config_path: Path) -> dict:
+    """Load configuration from YAML file."""
     with config_path.open("r", encoding="utf-8") as handle:
-        config = yaml.safe_load(handle)
+        return yaml.safe_load(handle)
 
-    if not isinstance(config, dict):
-        raise ValueError("Config file must contain a YAML mapping")
 
-def rank_from_template(card_name: Optional[str]) -> Optional[str]:
-    if not card_name:
-        return None
-    return card_name[0].upper()
+def print_banner() -> None:
+    """Print a nice banner."""
+    banner = """
+╔════════════════════════════════════════════════════╗
+║         VisionPanjabi - Poker Vision Engine        ║
+║              Local Video Demo Mode                 ║
+╚════════════════════════════════════════════════════╝
+"""
+    print(banner)
 
-def validate_config(config: Dict[str, object], config_path: Path) -> Dict[str, object]:
-    stream_cfg = config.get("stream") or {}
-    stream_url = stream_cfg.get("url")
-    if not isinstance(stream_url, str):
-        raise ValueError("stream.url must be a string")
-    parsed_url = urlparse(stream_url)
-    if not parsed_url.scheme or not parsed_url.netloc:
-        raise ValueError("stream.url must include a scheme and hostname")
 
-    templates_dir = Path(config.get("templates_dir") or DEFAULT_TEMPLATES_DIR)
-    if not templates_dir.exists():
-        raise FileNotFoundError(f"Templates directory not found: {templates_dir}")
-    if not templates_dir.is_dir():
-        raise NotADirectoryError(f"Templates path is not a directory: {templates_dir}")
+def print_table_result(table_id: str, table_data: dict, strategy_result=None) -> None:
+    """Print formatted table results."""
+    print(f"\n{'='*60}")
+    print(f"📊 {table_id.upper()}")
+    print(f"{'='*60}")
 
-def build_multi_table_agent(config: dict) -> MultiTableVision:
+    cards = table_data.get("cards", [None, None])
+    print(f"🎴 Hero Cards: {cards[0] or '?'} | {cards[1] or '?'}")
+    print(f"💰 Stack Size: {table_data.get('stack_size', 'Unknown')}")
+    print(f"🔘 Dealer Button: {'Yes ✓' if table_data.get('dealer_button') else 'No ✗'}")
+
+    if strategy_result:
+        print(f"\n🎯 STRATEGY RECOMMENDATION:")
+        print(f"   Hand: {strategy_result.hand}")
+        print(f"   Zone: {strategy_result.zone}")
+        print(f"   Action: {strategy_result.action}")
+    else:
+        print(f"\n⚠️  No strategy available (cards not detected)")
+
+    print(f"{'='*60}\n")
+
+
+def main() -> None:
+    """Main entry point for vision engine."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    logger = logging.getLogger(__name__)
+
+    print_banner()
+    logger.info("VisionPanjabi engine starting...")
+
+    # Load configuration
+    config_path = Path("config.yaml")
+    if not config_path.exists():
+        logger.error("config.yaml not found!")
+        print("\n❌ ERROR: config.yaml not found in current directory")
+        print("Please create config.yaml with your settings.")
+        return
+
+    config = load_config(config_path)
+    logger.info("Configuration loaded successfully")
+
+    # Check video file exists
+    video_path = Path(config["stream"]["url"])
+    if not video_path.exists():
+        logger.error("Video file not found: %s", video_path)
+        print(f"\n❌ ERROR: Video file not found: {video_path}")
+        print(f"Please place your video file at: {video_path}")
+        return
+
+    print(f"📹 Video file: {video_path}")
+
+    # Build ROI set from config
     roi_config = config["roi"]
     base_rois = TableROISet(
         hero_left=ROI(**roi_config["hero_left"]),
@@ -53,49 +88,63 @@ def build_multi_table_agent(config: dict) -> MultiTableVision:
         stack=ROI(**roi_config["stack"]),
         dealer_button=ROI(**roi_config["dealer_button"]),
     )
-    multi_table_config = config.get("multi_table", {})
-    return MultiTableVision(
-        stream_url=config["stream"]["url"],
-        templates_dir=Path(config.get("templates_dir", "/app/templates")),
+
+    # Initialize multi-table vision
+    logger.info("Initializing vision system...")
+    vision = MultiTableVision(
+        stream_url=str(video_path),
+        templates_dir=Path("templates"),
         base_rois=base_rois,
-        auto_detect=multi_table_config.get("auto_detect", True),
-        max_tables=multi_table_config.get("max_tables", 6),
-        manual_layouts=multi_table_config.get("layouts", []),
+        auto_detect=config["multi_table"]["auto_detect"],
+        max_tables=config["multi_table"]["max_tables"],
+        manual_layouts=config["multi_table"].get("layouts", []),
     )
 
+    # Initialize strategy engine
+    strategy = StrategyEngine(Path(config["strategy"]["matrix_path"]))
+    logger.info("Strategy engine initialized")
 
-def apply_strategy(
-    strategy_engine: StrategyEngine, table_states: dict[str, dict[str, object]]
-) -> dict[str, dict[str, object]]:
-    for table_name, state in table_states.items():
-        cards = state.get("cards", [])
-        rank_left = rank_from_template(cards[0]) if len(cards) > 0 else None
-        rank_right = rank_from_template(cards[1]) if len(cards) > 1 else None
-        result = strategy_engine.lookup(rank_left, rank_right)
-        state["strategy"] = {
-            "hand": result.hand,
-            "zone": result.zone,
-            "action": result.action,
+    # Read all tables
+    print("\n🔍 Analyzing poker tables...\n")
+    tables_data = vision.read_all_tables()
+
+    # Build complete output with strategy
+    output = {"tables": {}}
+
+    for table_id, table_info in tables_data.items():
+        cards = table_info["cards"]
+        table_output = {
+            "cards": cards,
+            "stack_size": table_info["stack_size"],
+            "dealer_button": table_info["dealer_button"],
         }
-        table_states[table_name] = state
-    return table_states
 
+        strategy_result = None
+        if cards[0] and cards[1]:
+            rank_left = cards[0][0].upper()
+            rank_right = cards[1][0].upper()
+            strategy_result = strategy.lookup(rank_left, rank_right)
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO)
-    config_path = Path(os.getenv("CONFIG_PATH", "config.yaml"))
-    logging.info("Loading configuration from %s", config_path)
+            table_output["strategy"] = {
+                "hand": strategy_result.hand,
+                "zone": strategy_result.zone,
+                "action": strategy_result.action,
+            }
 
-    config = load_config(config_path)
-    strategy_engine = StrategyEngine(Path(config["strategy"]["matrix_path"]))
-    multi_table_agent = build_multi_table_agent(config)
+        output["tables"][table_id] = table_output
 
-    table_states = multi_table_agent.read_all_tables()
-    evaluated_tables = apply_strategy(strategy_engine, table_states)
+        # Print formatted output for each table
+        print_table_result(table_id, table_output, strategy_result)
 
-    output = multi_table_agent.to_json(evaluated_tables)
-    logging.info("Evaluation result: %s", output)
-    print(output)
+    # Print JSON output
+    print("\n" + "=" * 60)
+    print("📄 JSON OUTPUT:")
+    print("=" * 60)
+    print(json.dumps(output, indent=2))
+    print("=" * 60 + "\n")
+
+    logger.info("VisionPanjabi engine completed successfully")
+    print("✅ Analysis complete!\n")
 
 
 if __name__ == "__main__":
