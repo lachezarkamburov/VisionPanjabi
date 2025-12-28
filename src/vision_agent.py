@@ -95,6 +95,7 @@ class VisionAgent:
         roi_stack: ROI,
         roi_button: ROI,
         match_threshold: float = 0.92,
+        min_capture_interval: float = 0.5,
     ) -> None:
         self.stream_url = self._validate_stream_url(stream_url)
         self.templates_dir = templates_dir
@@ -193,6 +194,8 @@ class VisionAgent:
             stack_size=stack_size,
             dealer_button=dealer_button_match is not None,
         )
+        self._state_cache = game_state
+        self._state_cache_time = self._frame_cache_time
         self.logger.info("Captured game state: %s", game_state)
         return game_state
 
